@@ -1,0 +1,32 @@
+---
+- name: Assert RHEL/Rocky/Alma 9 family
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == "RedHat"
+      - ansible_distribution_major_version | int >= 9
+    fail_msg: "Ce rôle ne supporte que RHEL 9 / Rocky 9 / AlmaLinux 9 (détecté : {{ ansible_distribution }} {{ ansible_distribution_version }})."
+
+- name: Assert required host vars are defined
+  ansible.builtin.assert:
+    that:
+      - openbao_node_id is defined
+      - openbao_node_id | length > 0
+      - openbao_dc is defined
+      - openbao_dc | length > 0
+    fail_msg: "openbao_node_id et openbao_dc doivent être définis dans l'inventaire pour {{ inventory_hostname }}."
+
+- name: Assert OpenBao checksum is set and valid (64 hex chars)
+  ansible.builtin.assert:
+    that:
+      - openbao_checksum_sha256 is defined
+      - openbao_checksum_sha256 | length == 64
+      - openbao_checksum_sha256 is match("^[a-fA-F0-9]{64}$")
+    fail_msg: "openbao_checksum_sha256 doit être renseigné dans group_vars/all/main.yml (SHA256 du binaire, 64 caractères hex)."
+
+- name: Assert SELinux is enforcing
+  ansible.builtin.assert:
+    that:
+      - ansible_selinux is defined
+      - ansible_selinux.status == "enabled"
+      - ansible_selinux.mode == "enforcing"
+    fail_msg: "SELinux doit être en enforcing sur les nœuds OpenBao (mode actuel : {{ ansible_selinux.mode | default('disabled') }})."

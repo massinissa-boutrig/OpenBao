@@ -1,0 +1,55 @@
+---
+- name: Install keepalived and helpers
+  ansible.builtin.dnf:
+    name:
+      - keepalived
+      - psmisc
+      - firewalld
+      - python3-firewall
+    state: present
+    update_cache: true
+  tags: [keepalived, packages]
+
+- name: Deploy HAProxy check script
+  ansible.builtin.template:
+    src: check_haproxy.sh.j2
+    dest: "{{ keepalived_check_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [keepalived, config]
+
+- name: Deploy keepalived.conf
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: restart keepalived
+  tags: [keepalived, config]
+
+- name: Allow keepalived to bind any port (SELinux)
+  ansible.posix.seboolean:
+    name: keepalived_connect_any
+    state: true
+    persistent: true
+  tags: [keepalived, selinux]
+
+- name: Allow VRRP (proto 112) from peer HAProxy in same DC
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ hostvars[item].ansible_host }}/32 protocol value=\"112\" accept"
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ groups[haproxy_dc | replace('-', '_')] }}"
+  when: item != inventory_hostname
+  tags: [keepalived, firewall]
+
+- name: Enable and start keepalived
+  ansible.builtin.systemd:
+    name: keepalived
+    state: started
+    enabled: true
+  tags: [keepalived, service]

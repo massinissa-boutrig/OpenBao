@@ -1,0 +1,22 @@
+---
+- name: Deploy logrotate config for OpenBao logs
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/openbao
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {{ openbao_log_dir }}/*.log {
+          daily
+          rotate 30
+          compress
+          delaycompress
+          missingok
+          notifempty
+          create 0640 {{ openbao_user }} {{ openbao_group }}
+          sharedscripts
+          postrotate
+              /bin/kill -HUP $(cat /var/run/openbao.pid 2>/dev/null) 2>/dev/null || \
+              systemctl reload openbao 2>/dev/null || true
+          endscript
+      }

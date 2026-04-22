@@ -1,0 +1,30 @@
+---
+- name: Create openbao group
+  ansible.builtin.group:
+    name: "{{ openbao_group }}"
+    system: true
+    state: present
+
+- name: Create openbao system user
+  ansible.builtin.user:
+    name: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    system: true
+    shell: /sbin/nologin
+    home: "{{ openbao_data_dir }}"
+    create_home: false
+    state: present
+
+- name: Create openbao directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ openbao_config_dir }}", mode: "0750" }
+    - { path: "{{ openbao_tls_dir }}",    mode: "0750" }
+    - { path: "{{ openbao_data_dir }}",   mode: "0700" }
+    - { path: "{{ openbao_raft_dir }}",   mode: "0700" }
+    - { path: "{{ openbao_log_dir }}",    mode: "0750" }

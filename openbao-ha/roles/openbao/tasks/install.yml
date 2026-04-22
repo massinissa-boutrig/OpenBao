@@ -1,0 +1,46 @@
+---
+- name: Check installed OpenBao version (if any)
+  ansible.builtin.command: "{{ openbao_binary_path }} version"
+  register: openbao_installed_version
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Set fact whether install/upgrade is needed
+  ansible.builtin.set_fact:
+    openbao_install_needed: >-
+      {{ openbao_installed_version.rc != 0
+         or openbao_version not in (openbao_installed_version.stdout | default('')) }}
+
+- name: Download OpenBao archive
+  ansible.builtin.get_url:
+    url: "{{ openbao_download_url }}"
+    dest: "{{ openbao_archive_local_path }}"
+    checksum: "sha256:{{ openbao_checksum_sha256 }}"
+    mode: "0644"
+    force: false
+    timeout: 60
+  when: openbao_install_needed
+
+- name: Extract OpenBao archive
+  ansible.builtin.unarchive:
+    src: "{{ openbao_archive_local_path }}"
+    dest: /usr/local/bin/
+    remote_src: true
+    creates: "{{ openbao_binary_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: openbao_install_needed
+  notify: restart openbao
+
+- name: Apply CAP_IPC_LOCK capability on bao binary (mlock without root)
+  community.general.capabilities:
+    path: "{{ openbao_binary_path }}"
+    capability: cap_ipc_lock=+ep
+    state: present
+
+- name: Cleanup archive
+  ansible.builtin.file:
+    path: "{{ openbao_archive_local_path }}"
+    state: absent

@@ -1,0 +1,65 @@
+{{ ansible_managed | comment }}
+# ============================================================
+# OpenBao — configuration HCL pour {{ inventory_hostname }} ({{ openbao_dc }})
+# Cluster Raft 1+1+1 multi-DC, mTLS, TLS 1.3 only.
+# Pas de bloc seal → Shamir implicite.
+# ============================================================
+
+ui            = {{ openbao_ui_enabled | string | lower }}
+cluster_name  = "{{ openbao_cluster_name }}"
+log_level     = "{{ openbao_log_level }}"
+log_format    = "{{ openbao_log_format }}"
+disable_mlock = {{ openbao_disable_mlock | string | lower }}
+
+api_addr     = "https://{{ ansible_host }}:{{ openbao_api_port }}"
+cluster_addr = "https://{{ ansible_host }}:{{ openbao_cluster_port }}"
+
+# ------------------------------------------------------------
+# Storage backend : Raft Integrated Storage
+# ------------------------------------------------------------
+storage "raft" {
+  path                = "{{ openbao_raft_dir }}"
+  node_id             = "{{ openbao_node_id }}"
+  performance_multiplier = {{ openbao_raft_performance_multiplier }}
+  snapshot_threshold  = {{ openbao_raft_snapshot_threshold }}
+  trailing_logs       = {{ openbao_raft_trailing_logs }}
+
+{% for host in groups['openbao'] %}
+  retry_join {
+    leader_api_addr         = "https://{{ hostvars[host].ansible_host }}:{{ openbao_api_port }}"
+    leader_ca_cert_file     = "{{ openbao_tls_dir }}/ca.crt"
+    leader_client_cert_file = "{{ openbao_tls_dir }}/server.crt"
+    leader_client_key_file  = "{{ openbao_tls_dir }}/server.key"
+  }
+{% endfor %}
+}
+
+# ------------------------------------------------------------
+# Listener TCP — TLS 1.3 only, mTLS sur le port cluster
+# ------------------------------------------------------------
+listener "tcp" {
+  address            = "{{ openbao_listener_address }}:{{ openbao_api_port }}"
+  cluster_address    = "{{ ansible_host }}:{{ openbao_cluster_port }}"
+  tls_cert_file      = "{{ openbao_tls_dir }}/server.crt"
+  tls_key_file       = "{{ openbao_tls_dir }}/server.key"
+  tls_client_ca_file = "{{ openbao_tls_dir }}/ca.crt"
+  tls_min_version    = "{{ openbao_tls_min_version }}"
+  tls_cipher_suites  = "{{ openbao_tls_cipher_suites | join(',') }}"
+
+  # Hardening x-forwarded-for (HAProxy en passthrough TCP, pas de header X-F-F,
+  # mais on durcit par défaut au cas où un proxy applicatif serait ajouté).
+  x_forwarded_for_authorized_addrs   = ""
+  x_forwarded_for_reject_not_present = false
+  x_forwarded_for_reject_not_authorized = true
+  x_forwarded_for_hop_skips          = 0
+}
+
+# ------------------------------------------------------------
+# Telemetry Prometheus
+# ------------------------------------------------------------
+{% if openbao_telemetry_prometheus_enabled %}
+telemetry {
+  prometheus_retention_time = "24h"
+  disable_hostname          = {{ openbao_telemetry_disable_hostname | string | lower }}
+}
+{% endif %}

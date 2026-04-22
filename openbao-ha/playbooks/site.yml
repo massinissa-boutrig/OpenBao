@@ -1,0 +1,24 @@
+---
+# ============================================================
+# Orchestration complète : déploie OpenBao + HAProxy + keepalived
+# ============================================================
+- name: Déployer les nœuds OpenBao
+  hosts: openbao
+  become: true
+  gather_facts: true
+  roles:
+    - openbao
+
+- name: Déployer HAProxy
+  hosts: haproxy
+  become: true
+  gather_facts: true
+  roles:
+    - haproxy
+
+- name: Déployer keepalived (VIP par DC)
+  hosts: haproxy
+  become: true
+  gather_facts: true
+  roles:
+    - keepalived

@@ -1,0 +1,56 @@
+---
+- name: Check that PKI artifacts exist on the controller
+  ansible.builtin.stat:
+    path: "{{ pki_dir }}/{{ item }}"
+  delegate_to: localhost
+  become: false
+  register: pki_files_stat
+  loop:
+    - "ca.crt"
+    - "{{ inventory_hostname }}.crt"
+    - "{{ inventory_hostname }}.key"
+
+- name: Fail if any PKI artifact is missing
+  ansible.builtin.fail:
+    msg: "Artefact PKI manquant : {{ item.item }}. Lancer d'abord : ansible-playbook playbooks/pki.yml"
+  when: not item.stat.exists
+  loop: "{{ pki_files_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Copy CA certificate to OpenBao TLS dir
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/ca.crt"
+    dest: "{{ openbao_tls_dir }}/ca.crt"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    mode: "0644"
+  notify: restart openbao
+
+- name: Copy host certificate
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/{{ inventory_hostname }}.crt"
+    dest: "{{ openbao_tls_dir }}/server.crt"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    mode: "0644"
+  notify: restart openbao
+
+- name: Copy host private key
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/{{ inventory_hostname }}.key"
+    dest: "{{ openbao_tls_dir }}/server.key"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    mode: "0600"
+  no_log: true
+  notify: restart openbao
+
+- name: Add internal CA to system trust store
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/ca.crt"
+    dest: /etc/pki/ca-trust/source/anchors/openbao-internal-ca.crt
+    owner: root
+    group: root
+    mode: "0644"
+  notify: update ca trust

@@ -1,0 +1,64 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=OpenBao - Secrets management
+Documentation=https://openbao.org/docs/
+Requires=network-online.target
+After=network-online.target
+ConditionFileNotEmpty={{ openbao_config_dir }}/config.hcl
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=notify
+User={{ openbao_user }}
+Group={{ openbao_group }}
+EnvironmentFile=/etc/sysconfig/openbao
+ExecStart={{ openbao_binary_path }} server -config={{ openbao_config_dir }}/config.hcl
+ExecReload=/bin/kill --signal HUP $MAINPID
+KillMode=process
+KillSignal=SIGINT
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# --- Capabilities : strict minimum ---
+AmbientCapabilities=CAP_IPC_LOCK
+CapabilityBoundingSet=CAP_IPC_LOCK
+NoNewPrivileges=true
+SecureBits=keep-caps
+
+# --- Sandboxing systemd ---
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# --- Système d'appels (syscall filter) ---
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @swap @reboot @debug
+
+# --- Écritures restreintes ---
+ReadWritePaths={{ openbao_data_dir }} {{ openbao_log_dir }}
+
+# --- Limites ressources ---
+LimitMEMLOCK={{ openbao_limit_memlock }}
+LimitNOFILE={{ openbao_limit_nofile }}
+LimitCORE={{ openbao_limit_core }}
+
+[Install]
+WantedBy=multi-user.target

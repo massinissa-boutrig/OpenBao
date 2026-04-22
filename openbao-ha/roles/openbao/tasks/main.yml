@@ -1,0 +1,41 @@
+---
+# Orchestration du rôle openbao — chaque sous-tâche porte ses propres tags.
+- name: Preflight checks
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [openbao, preflight]
+
+- name: Install OS packages
+  ansible.builtin.import_tasks: packages.yml
+  tags: [openbao, packages]
+
+- name: Create dedicated user/group and directories
+  ansible.builtin.import_tasks: user.yml
+  tags: [openbao, user]
+
+- name: Install OpenBao binary
+  ansible.builtin.import_tasks: install.yml
+  tags: [openbao, install]
+
+- name: Deploy TLS material (CA + host cert/key)
+  ansible.builtin.import_tasks: tls.yml
+  tags: [openbao, tls]
+
+- name: Deploy configuration
+  ansible.builtin.import_tasks: config.yml
+  tags: [openbao, config]
+
+- name: Deploy systemd unit
+  ansible.builtin.import_tasks: systemd.yml
+  tags: [openbao, systemd]
+
+- name: Configure firewalld
+  ansible.builtin.import_tasks: firewall.yml
+  tags: [openbao, firewall]
+
+- name: Configure logrotate
+  ansible.builtin.import_tasks: logrotate.yml
+  tags: [openbao, logrotate]
+
+- name: Enable and start service
+  ansible.builtin.import_tasks: service.yml
+  tags: [openbao, service]

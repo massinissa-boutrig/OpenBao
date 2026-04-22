@@ -1,0 +1,70 @@
+{{ ansible_managed | comment }}
+# ============================================================
+# HAProxy — TCP passthrough vers le cluster OpenBao (3 nœuds)
+# Healthcheck HTTPS sur /v1/sys/health (codes 200|429 acceptés)
+# Pas de stickiness — OpenBao redirige vers le leader nativement.
+# ============================================================
+
+global
+    log         /dev/log local0
+    log         /dev/log local1 notice
+    chroot      /var/lib/haproxy
+    pidfile     /var/run/haproxy.pid
+    maxconn     {{ haproxy_maxconn }}
+    user        haproxy
+    group       haproxy
+    daemon
+    stats socket /var/lib/haproxy/stats mode 660 level admin
+    tune.ssl.default-dh-param 2048
+    spread-checks 4
+
+defaults
+    mode                    tcp
+    log                     global
+    option                  tcplog
+    option                  dontlognull
+    option                  redispatch
+    retries                 3
+    timeout connect         {{ haproxy_timeout_connect }}
+    timeout client          {{ haproxy_timeout_client }}
+    timeout server          {{ haproxy_timeout_server }}
+    timeout check           {{ haproxy_timeout_check }}
+    maxconn                 {{ haproxy_maxconn }}
+
+# ------------------------------------------------------------
+# Frontend API OpenBao
+# ------------------------------------------------------------
+frontend openbao_api
+    bind *:{{ haproxy_frontend_port }}
+    mode tcp
+    option tcplog
+    default_backend openbao_backend
+
+# ------------------------------------------------------------
+# Backend : 3 nœuds OpenBao, healthcheck HTTPS sur /v1/sys/health
+# ------------------------------------------------------------
+backend openbao_backend
+    mode tcp
+    balance {{ haproxy_balance_algorithm }}
+    option httpchk
+    http-check send meth GET uri /v1/sys/health?standbyok=true&perfstandbyok=true
+    http-check expect rstatus {{ haproxy_health_status_regex }}
+    default-server check check-ssl verify required ca-file {{ haproxy_ca_path }} inter 5s fall 3 rise 2 on-marked-down shutdown-sessions
+
+{% for host in groups['openbao'] %}
+    server {{ host }} {{ hostvars[host].ansible_host }}:{{ openbao_api_port }} sni str({{ host }}.{{ internal_domain }})
+{% endfor %}
+
+# ------------------------------------------------------------
+# Stats — auth requise, restreint par firewalld
+# ------------------------------------------------------------
+frontend stats
+    bind *:{{ haproxy_stats_port }}
+    mode http
+    stats enable
+    stats hide-version
+    stats uri /stats
+    stats refresh 10s
+    stats realm HAProxy\ Statistics
+    stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_password }}
+    stats admin if TRUE

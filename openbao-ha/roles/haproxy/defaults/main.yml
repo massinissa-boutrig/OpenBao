@@ -1,0 +1,20 @@
+---
+# Defaults rôle haproxy.
+haproxy_frontend_port: 8200
+haproxy_stats_port: 8404
+haproxy_stats_user: admin
+
+haproxy_timeout_connect: "5s"
+haproxy_timeout_client: "2m"
+haproxy_timeout_server: "2m"
+haproxy_timeout_check: "5s"
+
+haproxy_maxconn: 50000
+haproxy_balance_algorithm: roundrobin
+haproxy_health_status_regex: "(200|429)"
+
+haproxy_ca_path: /etc/haproxy/ca.crt
+haproxy_log_dir: /var/log/haproxy
+
+# Sources autorisées pour la page stats — surcharger via group_vars/all/main.yml.
+haproxy_stats_allowed_sources: []

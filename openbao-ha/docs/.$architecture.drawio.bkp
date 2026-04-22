@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="app.diagrams.net" agent="OpenBao-HA Spec" version="24.0.0">
+  <diagram name="OpenBao HA multi-DC" id="openbao-ha-architecture">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="OpenBao HA — Architecture multi-datacenter (3 DC, cluster Raft 1+1+1)" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;fontColor=#1F2A44;" vertex="1" parent="1">
+          <mxGeometry x="200" y="20" width="1200" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Clients -->
+        <mxCell id="clients" value="👥 Clients&#xa;(applications, opérateurs, CI/CD)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F4FF;strokeColor=#1F6FEB;fontColor=#0B3D91;fontSize=13;fontStyle=1;shadow=1;" vertex="1" parent="1">
+          <mxGeometry x="640" y="80" width="320" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== DC A ==================== -->
+        <mxCell id="dc_a" value="🏢 Datacenter A" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#475569;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#1E293B;verticalAlign=top;align=left;spacingLeft=15;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="200" width="440" height="700" as="geometry" />
+        </mxCell>
+
+        <!-- VIP A -->
+        <mxCell id="vip_a" value="🟢 VIP A&#xa;vip-bao-a.intra : 8200&#xa;VRRP id 51" style="rhombus;whiteSpace=wrap;html=1;fillColor=#DCFCE7;strokeColor=#16A34A;strokeWidth=2;dashed=1;fontColor=#14532D;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="180" y="260" width="200" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy A1 -->
+        <mxCell id="ha_a1" value="HAProxy A1&#xa;MASTER · prio 110&#xa;keepalived + check_haproxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E3A8A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="420" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy A2 -->
+        <mxCell id="ha_a2" value="HAProxy A2&#xa;BACKUP · prio 100&#xa;keepalived + check_haproxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E3A8A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="290" y="420" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- bao-node-1 -->
+        <mxCell id="bao_a" value="🔐 bao-node-1&#xa;Raft node-1&#xa;OpenBao 8200 / 8201&#xa;TLS 1.3 + mTLS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontColor=#7C2D12;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="170" y="580" width="220" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- DC A info -->
+        <mxCell id="dc_a_info" value="Sous-réseau 10.10.1.0/24" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontColor=#64748B;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="180" y="850" width="200" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== DC B ==================== -->
+        <mxCell id="dc_b" value="🏢 Datacenter B" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#475569;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#1E293B;verticalAlign=top;align=left;spacingLeft=15;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="580" y="200" width="440" height="700" as="geometry" />
+        </mxCell>
+
+        <!-- VIP B -->
+        <mxCell id="vip_b" value="🟢 VIP B&#xa;vip-bao-b.intra : 8200&#xa;VRRP id 52" style="rhombus;whiteSpace=wrap;html=1;fillColor=#DCFCE7;strokeColor=#16A34A;strokeWidth=2;dashed=1;fontColor=#14532D;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="700" y="260" width="200" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy B1 -->
+        <mxCell id="ha_b1" value="HAProxy B1&#xa;MASTER · prio 110&#xa;keepalived + check_haproxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E3A8A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="620" y="420" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy B2 -->
+        <mxCell id="ha_b2" value="HAProxy B2&#xa;BACKUP · prio 100&#xa;keepalived + check_haproxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E3A8A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="810" y="420" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- bao-node-2 -->
+        <mxCell id="bao_b" value="🔐 bao-node-2&#xa;Raft node-2&#xa;OpenBao 8200 / 8201&#xa;TLS 1.3 + mTLS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontColor=#7C2D12;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="690" y="580" width="220" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- DC B info -->
+        <mxCell id="dc_b_info" value="Sous-réseau 10.10.2.0/24" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontColor=#64748B;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="700" y="850" width="200" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== DC C ==================== -->
+        <mxCell id="dc_c" value="🏢 Datacenter C" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8FAFC;strokeColor=#475569;strokeWidth=2;fontSize=14;fontStyle=1;fontColor=#1E293B;verticalAlign=top;align=left;spacingLeft=15;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="1100" y="200" width="440" height="700" as="geometry" />
+        </mxCell>
+
+        <!-- VIP C -->
+        <mxCell id="vip_c" value="🟢 VIP C&#xa;vip-bao-c.intra : 8200&#xa;VRRP id 53" style="rhombus;whiteSpace=wrap;html=1;fillColor=#DCFCE7;strokeColor=#16A34A;strokeWidth=2;dashed=1;fontColor=#14532D;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="260" width="200" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy C1 -->
+        <mxCell id="ha_c1" value="HAProxy C1&#xa;MASTER · prio 110&#xa;keepalived + check_haproxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E3A8A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="420" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy C2 -->
+        <mxCell id="ha_c2" value="HAProxy C2&#xa;BACKUP · prio 100&#xa;keepalived + check_haproxy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DBEAFE;strokeColor=#2563EB;strokeWidth=2;fontColor=#1E3A8A;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1330" y="420" width="180" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- bao-node-3 -->
+        <mxCell id="bao_c" value="🔐 bao-node-3&#xa;Raft node-3&#xa;OpenBao 8200 / 8201&#xa;TLS 1.3 + mTLS" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FEF3C7;strokeColor=#D97706;strokeWidth=2;fontColor=#7C2D12;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="580" width="220" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- DC C info -->
+        <mxCell id="dc_c_info" value="Sous-réseau 10.10.3.0/24" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontColor=#64748B;fontStyle=2;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="850" width="200" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== Flux Clients → VIP (épais, plein) ==================== -->
+        <mxCell id="e_clients_vipa" style="endArrow=classic;html=1;strokeColor=#1F6FEB;strokeWidth=3;exitX=0.25;exitY=1;entryX=0.5;entryY=0;curved=1;" edge="1" parent="1" source="clients" target="vip_a">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_clients_vipa_lbl" value="HTTPS 8200" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=10;fontColor=#1F6FEB;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="430" y="180" width="80" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_clients_vipb" style="endArrow=classic;html=1;strokeColor=#1F6FEB;strokeWidth=3;exitX=0.5;exitY=1;entryX=0.5;entryY=0;curved=1;" edge="1" parent="1" source="clients" target="vip_b">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_clients_vipb_lbl" value="HTTPS 8200" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=10;fontColor=#1F6FEB;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="760" y="180" width="80" height="20" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e_clients_vipc" style="endArrow=classic;html=1;strokeColor=#1F6FEB;strokeWidth=3;exitX=0.75;exitY=1;entryX=0.5;entryY=0;curved=1;" edge="1" parent="1" source="clients" target="vip_c">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_clients_vipc_lbl" value="HTTPS 8200" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;fontSize=10;fontColor=#1F6FEB;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="180" width="80" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== VIP ↔ HAProxy (VRRP, pointillé) ==================== -->
+        <mxCell id="e_vipa_haa1" style="endArrow=none;html=1;strokeColor=#16A34A;strokeWidth=2;dashed=1;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="vip_a" target="ha_a1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_vipa_haa2" style="endArrow=none;html=1;strokeColor=#16A34A;strokeWidth=2;dashed=1;exitX=0.75;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="vip_a" target="ha_a2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_vipb_hab1" style="endArrow=none;html=1;strokeColor=#16A34A;strokeWidth=2;dashed=1;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="vip_b" target="ha_b1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_vipb_hab2" style="endArrow=none;html=1;strokeColor=#16A34A;strokeWidth=2;dashed=1;exitX=0.75;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="vip_b" target="ha_b2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_vipc_hac1" style="endArrow=none;html=1;strokeColor=#16A34A;strokeWidth=2;dashed=1;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="vip_c" target="ha_c1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_vipc_hac2" style="endArrow=none;html=1;strokeColor=#16A34A;strokeWidth=2;dashed=1;exitX=0.75;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="vip_c" target="ha_c2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy MASTER ↔ BACKUP (heartbeat VRRP) -->
+        <mxCell id="e_haa_pair" style="endArrow=none;startArrow=none;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ha_a1" target="ha_a2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_hab_pair" style="endArrow=none;startArrow=none;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ha_b1" target="ha_b2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_hac_pair" style="endArrow=none;startArrow=none;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="ha_c1" target="ha_c2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== HAProxy → OpenBao (TCP passthrough) ==================== -->
+        <!-- HAProxy A1 vers les 3 nœuds -->
+        <mxCell id="e_haa1_baoa" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ha_a1" target="bao_a">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_haa1_baob" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=1;exitY=0.5;entryX=0;entryY=0.3;" edge="1" parent="1" source="ha_a1" target="bao_b">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_haa1_baoc" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=1;exitY=0.7;entryX=0;entryY=0.5;" edge="1" parent="1" source="ha_a1" target="bao_c">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy B1 vers les 3 nœuds -->
+        <mxCell id="e_hab1_baoa" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=0;exitY=0.5;entryX=1;entryY=0.3;" edge="1" parent="1" source="ha_b1" target="bao_a">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_hab1_baob" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ha_b1" target="bao_b">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_hab1_baoc" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=1;exitY=0.7;entryX=0;entryY=0.3;" edge="1" parent="1" source="ha_b1" target="bao_c">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- HAProxy C1 vers les 3 nœuds -->
+        <mxCell id="e_hac1_baoa" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=0;exitY=0.7;entryX=1;entryY=0.5;" edge="1" parent="1" source="ha_c1" target="bao_a">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_hac1_baob" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=0;exitY=0.5;entryX=1;entryY=0.7;" edge="1" parent="1" source="ha_c1" target="bao_b">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_hac1_baoc" style="endArrow=classic;html=1;strokeColor=#94A3B8;strokeWidth=1;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="ha_c1" target="bao_c">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ==================== Réplication Raft (épais bidirectionnel) ==================== -->
+        <mxCell id="e_raft_ab" value="Raft mTLS · 8201" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#DC2626;strokeWidth=3;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontColor=#7F1D1D;fontStyle=1;fontSize=11;" edge="1" parent="1" source="bao_a" target="bao_b">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="540" y="630" />
+              <mxPoint x="640" y="630" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_raft_bc" value="Raft mTLS · 8201" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#DC2626;strokeWidth=3;exitX=1;exitY=0.5;entryX=0;entryY=0.5;fontColor=#7F1D1D;fontStyle=1;fontSize=11;" edge="1" parent="1" source="bao_b" target="bao_c">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1060" y="630" />
+              <mxPoint x="1160" y="630" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e_raft_ac" value="Raft mTLS · 8201" style="endArrow=classic;startArrow=classic;html=1;strokeColor=#DC2626;strokeWidth=3;curved=1;fontColor=#7F1D1D;fontStyle=1;fontSize=11;" edge="1" parent="1" source="bao_a" target="bao_c">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="280" y="780" />
+              <mxPoint x="1320" y="780" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ==================== Légende ==================== -->
+        <mxCell id="legend_box" value="Légende" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#475569;strokeWidth=1;fontSize=12;fontStyle=1;fontColor=#1E293B;verticalAlign=top;align=left;spacingLeft=10;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="930" width="1480" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_client" value="━━ Flux client HTTPS 8200" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontColor=#1F6FEB;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="80" y="950" width="220" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_vrrp" value="┄┄ VRRP keepalived (VIP)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontColor=#16A34A;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="950" width="220" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_pass" value="┄┄ HAProxy → OpenBao (TCP passthrough, roundrobin)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontColor=#64748B;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="950" width="380" height="20" as="geometry" />
+        </mxCell>
+        <mxCell id="legend_raft" value="━━ Réplication Raft mTLS port 8201 (bidirectionnel)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;fontSize=11;fontColor=#DC2626;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="960" y="950" width="380" height="20" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

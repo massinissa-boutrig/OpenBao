@@ -1,0 +1,34 @@
+---
+# ============================================================
+# Variables spécifiques au groupe openbao (3 nœuds Raft)
+# ============================================================
+
+# Nom du cluster Raft (visible dans `bao status`).
+openbao_cluster_name: openbao-prod
+
+# Niveau de log (trace/debug/info/warn/error).
+openbao_log_level: info
+openbao_log_format: json
+
+# UI Web embarquée.
+openbao_ui_enabled: true
+
+# Activation de la télémétrie Prometheus.
+openbao_telemetry_prometheus_enabled: true
+openbao_telemetry_disable_hostname: true
+
+# Audit log fichier — activé via runbook après init,
+# le chemin est pré-créé par le rôle.
+openbao_audit_log_path: "{{ openbao_log_dir }}/audit.log"
+
+# Paramètres de tuning Raft.
+openbao_raft_performance_multiplier: 1
+openbao_raft_snapshot_threshold: 8192
+openbao_raft_trailing_logs: 10000
+
+# Adresse de bind du listener TCP (toutes interfaces).
+openbao_listener_address: "0.0.0.0"
+
+# Désactiver mlock = false → mlock activé (= secrets non swappés).
+# Nécessite cap_ipc_lock sur le binaire (géré par tasks/install.yml).
+openbao_disable_mlock: false

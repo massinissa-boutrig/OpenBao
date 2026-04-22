@@ -1,0 +1,18 @@
+---
+- name: Open OpenBao API port (8200/tcp) in public zone
+  ansible.posix.firewalld:
+    port: "{{ openbao_api_port }}/tcp"
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Restrict cluster Raft port (8201/tcp) to peer IPs only
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ hostvars[item].ansible_host }}/32 port port={{ openbao_cluster_port }} protocol=tcp accept"
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ groups['openbao'] }}"
+  when: item != inventory_hostname

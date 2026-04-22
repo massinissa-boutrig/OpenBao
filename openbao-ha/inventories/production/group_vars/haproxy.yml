@@ -1,0 +1,31 @@
+---
+# ============================================================
+# Variables spécifiques au groupe haproxy
+# ============================================================
+
+# Port frontend (VIP) — doit être identique côté OpenBao.
+haproxy_frontend_port: 8200
+
+# Port stats (page admin).
+haproxy_stats_port: 8404
+haproxy_stats_user: admin
+# haproxy_stats_password vient de vault.yml
+
+# Timeouts.
+haproxy_timeout_connect: "5s"
+haproxy_timeout_client: "2m"
+haproxy_timeout_server: "2m"
+haproxy_timeout_check: "5s"
+
+# Codes HTTP acceptés par le healthcheck OpenBao :
+#   200 = leader actif
+#   429 = standby unsealed (sert lectures)
+# Les autres codes (501 init, 503 sealed, 472, 473) marquent le backend DOWN.
+haproxy_health_status_regex: "(200|429)"
+
+# Algorithme de load-balancing — pas de stickiness, OpenBao redirige
+# nativement les écritures vers le leader.
+haproxy_balance_algorithm: roundrobin
+
+# Chemin où le rôle copie la CA interne (pour healthcheck check-ssl).
+haproxy_ca_path: /etc/haproxy/ca.crt

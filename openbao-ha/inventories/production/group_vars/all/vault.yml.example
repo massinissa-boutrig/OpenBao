@@ -1,0 +1,39 @@
+---
+# ============================================================
+# Squelette du fichier Ansible Vault — à chiffrer en production.
+#
+# Création :
+#   ansible-vault create inventories/production/group_vars/all/vault.yml
+#
+# Édition :
+#   ansible-vault edit   inventories/production/group_vars/all/vault.yml
+#
+# Lancer un playbook :
+#   ansible-playbook playbooks/site.yml --ask-vault-pass
+# ============================================================
+#
+# ⚠️ IMPORTANT — NE PAS METTRE DANS CE VAULT :
+#   - Les 5 unseal keys Shamir (à distribuer à 5 opérateurs distincts,
+#     coffres individuels offline type KeePass / YubiKey).
+#   - Le root token initial (à révoquer dès qu'une AppRole admin existe).
+#
+# Ces secrets ne doivent JAMAIS être stockés dans un endroit unique
+# accessible à tout le monde — c'est le principe même du seal Shamir.
+# ============================================================
+
+# Passphrase de la clé privée de la CA interne (générée par playbooks/pki.yml).
+# Doit être longue (32+ caractères), aléatoire, conservée au coffre.
+pki_ca_passphrase: "CHANGEME_long_random_passphrase_for_internal_CA_private_key"
+
+# Mot de passe pour la page stats HAProxy (user "admin").
+haproxy_stats_password: "CHANGEME_haproxy_stats_admin_password"
+
+# Mot de passe partagé VRRP entre HAProxy MASTER et BACKUP d'un même DC.
+# Authentification PASS — 8 caractères max (limitation keepalived/VRRP).
+keepalived_auth_pass: "CHANGEM8"
+
+# Token OpenBao dédié au playbook backup.yml.
+# Créé après init via :
+#   bao token create -policy=snapshot-policy -orphan -ttl=8760h
+# La policy snapshot-policy doit autoriser sys/storage/raft/snapshot.
+openbao_backup_token: "CHANGEME_dedicated_backup_token"

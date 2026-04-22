@@ -1,0 +1,13 @@
+---
+# Defaults rôle keepalived.
+keepalived_advert_int: 1
+keepalived_check_interval: 2
+keepalived_check_rise: 2
+keepalived_check_fall: 2
+keepalived_check_weight: -20
+
+# Mot de passe VRRP — surcharger via vault.
+keepalived_auth_pass: "CHANGEME"
+
+# Script de check HAProxy.
+keepalived_check_script_path: /etc/keepalived/check_haproxy.sh

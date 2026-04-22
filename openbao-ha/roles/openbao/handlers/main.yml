@@ -1,0 +1,14 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: restart openbao
+  # ⚠️ Un restart met le nœud en SEALED — re-unseal manuel requis (3 opérateurs).
+  ansible.builtin.systemd:
+    name: openbao
+    state: restarted
+
+- name: update ca trust
+  ansible.builtin.command: /usr/bin/update-ca-trust extract
+  changed_when: true

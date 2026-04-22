@@ -1,0 +1,19 @@
+---
+- name: Install required OS packages
+  ansible.builtin.dnf:
+    name:
+      - unzip
+      - firewalld
+      - python3-firewall
+      - policycoreutils-python-utils
+      - logrotate
+      - jq
+      - libcap                # pour setcap (cap_ipc_lock)
+    state: present
+    update_cache: true
+
+- name: Ensure firewalld is enabled and running
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true

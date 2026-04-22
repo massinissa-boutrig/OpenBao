@@ -1,0 +1,40 @@
+{{ ansible_managed | comment }}
+# ============================================================
+# keepalived — VRRP pour la VIP OpenBao du {{ haproxy_dc }}
+# Une instance VRRP par DC, isolée (VRID unique par DC).
+# ============================================================
+
+global_defs {
+    router_id {{ inventory_hostname }}
+    enable_script_security
+    script_user root
+}
+
+vrrp_script chk_haproxy {
+    script "{{ keepalived_check_script_path }}"
+    interval {{ keepalived_check_interval }}
+    rise {{ keepalived_check_rise }}
+    fall {{ keepalived_check_fall }}
+    weight {{ keepalived_check_weight }}
+}
+
+vrrp_instance VI_openbao {
+    state {{ keepalived_role }}
+    interface {{ keepalived_interface }}
+    virtual_router_id {{ keepalived_vrrp_id }}
+    priority {{ keepalived_priority }}
+    advert_int {{ keepalived_advert_int }}
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass }}
+    }
+
+    virtual_ipaddress {
+        {{ keepalived_vip }}/{{ keepalived_vip_cidr }} dev {{ keepalived_interface }}
+    }
+
+    track_script {
+        chk_haproxy
+    }
+}

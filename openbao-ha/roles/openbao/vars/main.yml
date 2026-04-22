@@ -1,0 +1,5 @@
+---
+# Vars internes au rôle (non destinées à être surchargées).
+openbao_archive_filename: "bao_{{ openbao_version }}_linux_{{ openbao_arch }}.zip"
+openbao_archive_local_path: "/tmp/{{ openbao_archive_filename }}"
+openbao_extract_path: "/tmp/openbao-{{ openbao_version }}"

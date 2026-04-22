@@ -1,0 +1,117 @@
+---
+- name: Install HAProxy and dependencies
+  ansible.builtin.dnf:
+    name:
+      - haproxy
+      - firewalld
+      - python3-firewall
+      - policycoreutils-python-utils
+      - logrotate
+    state: present
+    update_cache: true
+  tags: [haproxy, packages]
+
+- name: Ensure firewalld is enabled
+  ansible.builtin.systemd:
+    name: firewalld
+    state: started
+    enabled: true
+  tags: [haproxy, firewall]
+
+- name: Create HAProxy log directory
+  ansible.builtin.file:
+    path: "{{ haproxy_log_dir }}"
+    state: directory
+    owner: haproxy
+    group: haproxy
+    mode: "0750"
+  tags: [haproxy, install]
+
+- name: Check that internal CA is present on controller
+  ansible.builtin.stat:
+    path: "{{ pki_dir }}/ca.crt"
+  delegate_to: localhost
+  become: false
+  register: ca_stat
+  tags: [haproxy, tls]
+
+- name: Fail if CA is missing
+  ansible.builtin.fail:
+    msg: "ca.crt manquant dans {{ pki_dir }} — lancer playbooks/pki.yml d'abord."
+  when: not ca_stat.stat.exists
+  tags: [haproxy, tls]
+
+- name: Copy internal CA for healthcheck verification
+  ansible.builtin.copy:
+    src: "{{ pki_dir }}/ca.crt"
+    dest: "{{ haproxy_ca_path }}"
+    owner: haproxy
+    group: haproxy
+    mode: "0644"
+  notify: reload haproxy
+  tags: [haproxy, tls]
+
+- name: Allow HAProxy to connect to backends (SELinux)
+  ansible.posix.seboolean:
+    name: haproxy_connect_any
+    state: true
+    persistent: true
+  tags: [haproxy, selinux]
+
+- name: Deploy haproxy.cfg (validated via haproxy -c -f)
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: haproxy
+    mode: "0640"
+    validate: "haproxy -c -f %s"
+  notify: reload haproxy
+  tags: [haproxy, config]
+
+- name: Open frontend port (8200/tcp) in public zone
+  ansible.posix.firewalld:
+    port: "{{ haproxy_frontend_port }}/tcp"
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  tags: [haproxy, firewall]
+
+- name: Restrict stats port (8404/tcp) to allowed sources
+  ansible.posix.firewalld:
+    rich_rule: "rule family=ipv4 source address={{ item }} port port={{ haproxy_stats_port }} protocol=tcp accept"
+    zone: public
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ haproxy_stats_allowed_sources }}"
+  tags: [haproxy, firewall]
+
+- name: Deploy logrotate config for HAProxy
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/haproxy
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {{ haproxy_log_dir }}/*.log {
+          daily
+          rotate 30
+          compress
+          delaycompress
+          missingok
+          notifempty
+          create 0640 haproxy haproxy
+          postrotate
+              systemctl reload haproxy 2>/dev/null || true
+          endscript
+      }
+  tags: [haproxy, logrotate]
+
+- name: Enable and start HAProxy
+  ansible.builtin.systemd:
+    name: haproxy
+    state: started
+    enabled: true
+  tags: [haproxy, service]

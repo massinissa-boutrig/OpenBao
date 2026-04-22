@@ -1,0 +1,41 @@
+---
+# ============================================================
+# Defaults rôle openbao — surcharger via group_vars/openbao.yml
+# ============================================================
+
+# Bind du listener et des adresses (annoncées aux pairs Raft / aux clients).
+openbao_listener_address: "0.0.0.0"
+
+# Désactiver mlock = false → mlock activé (recommandé en prod, secrets non swappés).
+openbao_disable_mlock: false
+
+# UI Web embarquée.
+openbao_ui_enabled: true
+
+# Logs.
+openbao_log_level: info
+openbao_log_format: json
+
+# Cluster.
+openbao_cluster_name: openbao-prod
+
+# Tuning Raft.
+openbao_raft_performance_multiplier: 1
+openbao_raft_snapshot_threshold: 8192
+openbao_raft_trailing_logs: 10000
+
+# Audit log (créé après init via runbook, on ne fait que pré-créer le chemin).
+openbao_audit_log_path: "{{ openbao_log_dir }}/audit.log"
+
+# Telemetry Prometheus.
+openbao_telemetry_prometheus_enabled: true
+openbao_telemetry_disable_hostname: true
+
+# Limites systemd.
+openbao_limit_memlock: infinity
+openbao_limit_nofile: 65536
+openbao_limit_core: 0
+
+# Soft-fail : afficher l'erreur de `bao operator diagnose` sans casser le play
+# (utile au tout premier déploiement avant init).
+openbao_diagnose_soft_fail: true

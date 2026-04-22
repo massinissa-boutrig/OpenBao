@@ -1,0 +1,33 @@
+---
+- name: Deploy OpenBao main configuration
+  ansible.builtin.template:
+    src: config.hcl.j2
+    dest: "{{ openbao_config_dir }}/config.hcl"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    mode: "0640"
+  notify: restart openbao
+
+- name: Deploy environment file (BAO_ADDR, BAO_CACERT, ...)
+  ansible.builtin.template:
+    src: openbao.env.j2
+    dest: /etc/sysconfig/openbao
+    owner: root
+    group: "{{ openbao_group }}"
+    mode: "0640"
+  notify: restart openbao
+
+- name: Run bao operator diagnose (soft-fail if not initialized)
+  ansible.builtin.command: "{{ openbao_binary_path }} operator diagnose -config={{ openbao_config_dir }}/config.hcl"
+  environment:
+    BAO_ADDR: "https://127.0.0.1:{{ openbao_api_port }}"
+    BAO_CACERT: "{{ openbao_tls_dir }}/ca.crt"
+  register: bao_diagnose
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Show diagnose result
+  ansible.builtin.debug:
+    msg: "{{ bao_diagnose.stdout_lines | default(['(no output)']) }}"
+  when: bao_diagnose.rc != 0

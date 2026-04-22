@@ -1,0 +1,68 @@
+---
+# ============================================================
+# Variables globales — appliquées à tous les hôtes
+# ============================================================
+
+# --- Domaine et résolution ---
+internal_domain: intra
+
+# --- PKI interne (commune.crypto) ---
+pki_country: FR
+pki_state: Ile-de-France
+pki_locality: Paris
+pki_organization: Acme Corp
+pki_organizational_unit: Platform Engineering
+pki_common_name_ca: "Acme Internal OpenBao CA"
+pki_ca_validity_days: 3650        # 10 ans pour la CA racine
+pki_cert_validity_days: 365       # 1 an pour les certs hôtes
+pki_dir: "{{ playbook_dir }}/../pki"
+
+# --- OpenBao : version et binaire ---
+openbao_version: "2.4.1"          # adapter à la dernière stable
+# Renseigner le SHA256 depuis https://github.com/openbao/openbao/releases
+# openbao_<version>_linux_amd64.zip
+openbao_checksum_sha256: "CHANGEME_REPLACE_WITH_REAL_SHA256_64_HEX_CHARS_____________________"
+openbao_arch: amd64
+openbao_download_url: "https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}/bao_{{ openbao_version }}_linux_{{ openbao_arch }}.zip"
+openbao_binary_path: /usr/local/bin/bao
+
+# --- OpenBao : utilisateur système ---
+openbao_user: openbao
+openbao_group: openbao
+
+# --- OpenBao : chemins ---
+openbao_config_dir: /etc/openbao
+openbao_data_dir: /var/lib/openbao
+openbao_log_dir: /var/log/openbao
+openbao_tls_dir: /etc/openbao/tls
+openbao_raft_dir: "{{ openbao_data_dir }}/raft"
+
+# --- OpenBao : ports ---
+openbao_api_port: 8200
+openbao_cluster_port: 8201
+
+# --- OpenBao : seal Shamir ---
+openbao_key_shares: 5
+openbao_key_threshold: 3
+
+# --- OpenBao : TLS ---
+openbao_tls_min_version: "tls13"
+openbao_tls_cipher_suites:
+  - "TLS_AES_256_GCM_SHA384"
+  - "TLS_CHACHA20_POLY1305_SHA256"
+  - "TLS_AES_128_GCM_SHA256"
+
+# --- VIP / DNS HAProxy ---
+# Mapping logique DC → FQDN de la VIP frontale
+vip_dns_map:
+  dc-a: "vip-bao-a.{{ internal_domain }}"
+  dc-b: "vip-bao-b.{{ internal_domain }}"
+  dc-c: "vip-bao-c.{{ internal_domain }}"
+
+# --- HAProxy : sources autorisées pour les stats (supervision) ---
+haproxy_stats_allowed_sources:
+  - 10.20.0.0/16     # adapter à votre subnet supervision
+
+# --- Backup ---
+openbao_backup_dir: /var/backups/openbao
+openbao_backup_retention_days: 30

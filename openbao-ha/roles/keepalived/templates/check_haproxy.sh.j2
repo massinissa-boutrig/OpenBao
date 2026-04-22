@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+{{ ansible_managed | comment }}
+# Check : retourne 0 si haproxy tourne, 1 sinon.
+# keepalived appliquera weight={{ keepalived_check_weight }} en cas d'échec.
+set -eu
+if pgrep -x haproxy >/dev/null; then
+    exit 0
+else
+    exit 1
+fi
