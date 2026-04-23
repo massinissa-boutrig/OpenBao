@@ -39,3 +39,8 @@
 - name: Enable and start service
   ansible.builtin.import_tasks: service.yml
   tags: [openbao, service]
+
+- name: Auto-unseal (static — désactivé par défaut, voir openbao.yml)
+  ansible.builtin.import_tasks: unseal.yml
+  tags: [openbao, unseal]
+  when: openbao_auto_unseal_enabled | default(false) | bool

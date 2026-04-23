@@ -37,3 +37,26 @@ keepalived_auth_pass: "CHANGEM8"
 #   bao token create -policy=snapshot-policy -orphan -ttl=8760h
 # La policy snapshot-policy doit autoriser sys/storage/raft/snapshot.
 openbao_backup_token: "CHANGEME_dedicated_backup_token"
+
+# ============================================================
+# Auto-unseal STATIC (optionnel — uniquement si openbao_auto_unseal_enabled=true)
+# ============================================================
+# ⚠️ DANGER : ces clés sont l'équivalent du seuil Shamir. Quiconque
+# possède la passphrase ansible-vault possède de fait OpenBao.
+# Distribuer ces 3 clés à 3 opérateurs ne sert à RIEN si elles sont
+# regroupées ici — c'est le contraire du principe Shamir.
+#
+# Justification de ne mettre QUE le seuil (3) et pas les 5 :
+#   - Les 2 clés restantes sont distribuées à 2 opérateurs dans des
+#     coffres offline (ex: KeePass + YubiKey) pour permettre un unseal
+#     d'urgence si la passphrase Ansible Vault est compromise/perdue.
+#   - C'est un compromis : on perd l'isolation Shamir mais on garde
+#     une voie de récupération hors-Ansible.
+#
+# Format : liste de strings base64 (telles que retournées par
+# `bao operator init -format=json | jq -r '.unseal_keys_b64[]'`).
+# ============================================================
+openbao_unseal_keys:
+  - "CHANGEME_unseal_key_1_base64"
+  - "CHANGEME_unseal_key_2_base64"
+  - "CHANGEME_unseal_key_3_base64"

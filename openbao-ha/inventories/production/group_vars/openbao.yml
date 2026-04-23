@@ -32,3 +32,32 @@ openbao_listener_address: "0.0.0.0"
 # Désactiver mlock = false → mlock activé (= secrets non swappés).
 # Nécessite cap_ipc_lock sur le binaire (géré par tasks/install.yml).
 openbao_disable_mlock: false
+
+# ============================================================
+# Auto-unseal "static" — clés Shamir injectées depuis Ansible Vault
+# ============================================================
+# ⚠️ TRADE-OFF SÉCURITÉ MAJEUR :
+#   Activer cette option signifie que les 3 clés Shamir (= seuil)
+#   sont chiffrées dans inventories/production/group_vars/all/vault.yml.
+#   La passphrase Ansible Vault devient l'équivalent du seuil Shamir :
+#   qui la détient peut tout déchiffrer. Le bénéfice du modèle
+#   "5 personnes / 5 coffres distincts" disparaît.
+#
+#   À n'activer QUE si :
+#     1. La passphrase ansible-vault est elle-même protégée (HSM,
+#        secret manager, KeePass MFA dédié).
+#     2. Très peu de personnes y ont accès, et c'est tracé.
+#     3. Le contrôleur Ansible est durci (accès SSH restreint, audit).
+#
+#   Pour un modèle plus robuste, préférer "Transit auto-unseal" (un
+#   OpenBao bootstrap dédié servant de KMS) — cf. RUNBOOK §9.
+# ============================================================
+openbao_auto_unseal_enabled: false
+
+# Nombre de clés à présenter (= openbao_key_threshold, par défaut 3).
+# Ne PAS mettre les 5 clés ici : on garde les 2 autres hors-Ansible
+# pour permettre l'unseal manuel d'urgence si la passphrase Vault est compromise.
+openbao_unseal_keys_count: 3
+
+# Délai max d'attente du démarrage du listener TCP avant unseal (secondes).
+openbao_unseal_listener_timeout: 30

@@ -1,0 +1,25 @@
+---
+# ============================================================
+# Auto-unseal des 3 nœuds OpenBao depuis Ansible Vault.
+#
+# Usage :
+#   ansible-playbook playbooks/unseal.yml --ask-vault-pass
+#
+# Pré-requis :
+#   - openbao_auto_unseal_enabled: true dans group_vars/openbao.yml
+#   - openbao_unseal_keys: [...] dans group_vars/all/vault.yml (chiffré)
+#   - Le cluster doit déjà être initialisé (cf. RUNBOOK §1)
+#
+# Idempotence : si un nœud est déjà unsealed, la tâche est skip.
+# Ce playbook est sûr à relancer (cron post-reboot, hook CI, etc.).
+# ============================================================
+- name: Auto-unseal OpenBao (clés Shamir depuis Ansible Vault)
+  hosts: openbao
+  become: true
+  gather_facts: false
+  serial: 1   # un nœud à la fois — on évite la pression sur l'API leader
+  tasks:
+    - name: Importer les tâches d'unseal du rôle openbao
+      ansible.builtin.import_role:
+        name: openbao
+        tasks_from: unseal.yml

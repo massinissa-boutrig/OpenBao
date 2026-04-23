@@ -1,0 +1,102 @@
+---
+# ============================================================
+# Auto-unseal "static" — désactivé par défaut.
+# ============================================================
+# Cette tâche est conditionnée à openbao_auto_unseal_enabled.
+# Elle s'exécute SEULEMENT si :
+#   - le toggle est activé (group_vars/openbao.yml)
+#   - les clés sont fournies dans vault.yml (chiffré)
+#   - le nœud est sealed (vérifié via API)
+#
+# Toutes les tâches utilisent no_log: true et check_mode: false
+# pour ne jamais exposer les clés ni dans la sortie ni en --check.
+# ============================================================
+
+- name: Auto-unseal — vérifier que le toggle et les clés sont cohérents
+  ansible.builtin.assert:
+    that:
+      - openbao_unseal_keys is defined
+      - openbao_unseal_keys is sequence
+      - openbao_unseal_keys | length >= openbao_unseal_keys_count
+    fail_msg: >-
+      openbao_auto_unseal_enabled=true mais openbao_unseal_keys n'est pas défini
+      ou contient moins de {{ openbao_unseal_keys_count }} clés.
+      Renseigner inventories/production/group_vars/all/vault.yml.
+  when: openbao_auto_unseal_enabled | bool
+
+- name: Auto-unseal — attendre que le listener TCP réponde
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ openbao_api_port }}"
+    timeout: "{{ openbao_unseal_listener_timeout }}"
+  when: openbao_auto_unseal_enabled | bool
+
+- name: Auto-unseal — interroger l'état seal/init via l'API
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ openbao_api_port }}/v1/sys/seal-status"
+    method: GET
+    return_content: true
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 429, 472, 473, 501, 503]
+  register: openbao_seal_status
+  changed_when: false
+  check_mode: false
+  when: openbao_auto_unseal_enabled | bool
+
+- name: Auto-unseal — short-circuit si non initialisé (init manuel obligatoire)
+  ansible.builtin.debug:
+    msg: >-
+      Le nœud {{ inventory_hostname }} n'est pas encore initialisé
+      (sys/seal-status.initialized=false). L'init est une procédure manuelle —
+      voir RUNBOOK §1. Auto-unseal ignoré.
+  when:
+    - openbao_auto_unseal_enabled | bool
+    - not (openbao_seal_status.json.initialized | default(false))
+
+- name: Auto-unseal — short-circuit si déjà unsealed
+  ansible.builtin.debug:
+    msg: "Le nœud {{ inventory_hostname }} est déjà unsealed, rien à faire."
+  when:
+    - openbao_auto_unseal_enabled | bool
+    - openbao_seal_status.json.initialized | default(false)
+    - not (openbao_seal_status.json.sealed | default(true))
+
+- name: Auto-unseal — soumettre les clés Shamir une à une
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ openbao_api_port }}/v1/sys/unseal"
+    method: POST
+    body_format: json
+    body:
+      key: "{{ item }}"
+    return_content: true
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: 200
+  loop: "{{ openbao_unseal_keys[:openbao_unseal_keys_count] }}"
+  register: openbao_unseal_results
+  changed_when: not (openbao_unseal_results.json.sealed | default(true))
+  no_log: true
+  check_mode: false
+  when:
+    - openbao_auto_unseal_enabled | bool
+    - openbao_seal_status.json.initialized | default(false)
+    - openbao_seal_status.json.sealed | default(true)
+
+- name: Auto-unseal — vérifier que le nœud est bien unsealed
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ openbao_api_port }}/v1/sys/seal-status"
+    method: GET
+    return_content: true
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: 200
+  register: openbao_seal_status_after
+  changed_when: false
+  check_mode: false
+  failed_when:
+    - openbao_seal_status_after.json.sealed | default(true)
+  when:
+    - openbao_auto_unseal_enabled | bool
+    - openbao_seal_status.json.initialized | default(false)
+    - openbao_seal_status.json.sealed | default(true)
