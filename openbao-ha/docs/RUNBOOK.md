@@ -1,4 +1,4 @@
-# RUNBOOK — OpenBao HA multi-DC
+# RUNBOOK — OpenBao HA mono-DC sur OpenStack
 
 > Procédures d'exploitation à destination des opérateurs habilités. Toutes les commandes `bao` supposent que l'environnement `BAO_ADDR=https://127.0.0.1:8200` et `BAO_CACERT=/etc/openbao/tls/ca.crt` est positionné (cf. `/etc/default/openbao`). Le binaire OpenBao est en `/usr/bin/bao` (paquet .deb officiel).
 
@@ -6,6 +6,7 @@
 
 ## Sommaire
 
+0. [Prérequis OpenStack](#0-prérequis-openstack)
 1. [Initialisation du cluster](#1-initialisation-du-cluster)
 2. [Unseal après reboot](#2-unseal-après-reboot)
 3. [Snapshot Raft](#3-snapshot-raft)
@@ -14,6 +15,85 @@
 6. [Ajout d'un nœud](#6-ajout-dun-nœud)
 7. [Retrait d'un nœud](#7-retrait-dun-nœud)
 8. [Dépannage](#8-dépannage)
+
+---
+
+## 0. Prérequis OpenStack
+
+> **À lire avant tout déploiement.** Ce projet Ansible configure uniquement l'OS et les services — la création des VMs, des security groups, et de la VIP doit être faite en amont (Terraform, Heat, openstack CLI, ou console Horizon). Les éléments ci-dessous sont **indispensables** au bon fonctionnement de la HA.
+
+### 0.1 ServerGroup anti-affinity (3 AZ)
+
+Les 3 nœuds OpenBao doivent être répartis sur **3 Availability Zones distinctes** pour tolérer la perte d'une AZ. On utilise un `ServerGroup` avec la policy `anti-affinity`, qui garantit en plus que Nova ne place pas deux VMs du groupe sur le même hyperviseur.
+
+```bash
+# Création du ServerGroup (une seule fois)
+openstack server group create --policy anti-affinity openbao-cluster
+# → noter l'ID retourné, à passer en --hint group=<id> à chaque `openstack server create`
+
+# Provisioning des 3 VMs, une par AZ
+for i in 1 2 3; do
+  openstack server create \
+    --flavor m1.medium \
+    --image debian-13-trixie \
+    --availability-zone az-$i \
+    --hint group=<server_group_id> \
+    --security-group openbao-nodes \
+    --key-name ops \
+    --network openbao-net \
+    bao-node-$i
+done
+```
+
+Les 2 HAProxy peuvent être dans 2 AZ différentes (idéalement az-1 et az-2) sans ServerGroup strict.
+
+### 0.2 Security groups
+
+| Security group | Ingress | Source | Justification |
+|---|---|---|---|
+| `openbao-nodes` | TCP 22 | bastion | SSH admin |
+| `openbao-nodes` | TCP 8200 | `haproxy-frontends` | API OpenBao |
+| `openbao-nodes` | TCP 8201 | `openbao-nodes` | Réplication Raft (mTLS) |
+| `haproxy-frontends` | TCP 22 | bastion | SSH admin |
+| `haproxy-frontends` | TCP 8200 | subnet clients | Frontend VIP |
+| `haproxy-frontends` | TCP 8404 | subnet supervision | Page stats HAProxy |
+| `haproxy-frontends` | protocol 112 (VRRP) | `haproxy-frontends` | keepalived |
+
+L'egress reste par défaut (all). nftables applique un second filtre local plus strict (policy drop).
+
+### 0.3 VIP keepalived & allowed-address-pairs
+
+OpenStack Neutron bloque par défaut tout trafic dont l'IP source ne correspond pas à celle du port. Or, keepalived fait flotter `10.10.0.100` entre ha-1 et ha-2 → il faut autoriser explicitement cette IP en `allowed-address-pairs` sur **les deux** ports Neutron des HAProxy.
+
+```bash
+# Récupérer les IDs des ports
+PORT_HA1=$(openstack port list --server ha-1 -f value -c ID)
+PORT_HA2=$(openstack port list --server ha-2 -f value -c ID)
+
+# Autoriser la VIP
+openstack port set --allowed-address ip-address=10.10.0.100 $PORT_HA1
+openstack port set --allowed-address ip-address=10.10.0.100 $PORT_HA2
+```
+
+Sans cela, le trafic vers la VIP sera silencieusement droppé par Neutron après la bascule keepalived.
+
+### 0.4 Flavor et stockage recommandés
+
+| Composant | vCPU | RAM | Disque | Volume Cinder |
+|---|---|---|---|---|
+| OpenBao | 2 | 4 Go | 20 Go (racine) | 20 Go ext4 pour `/var/lib/openbao` (Raft) |
+| HAProxy | 1 | 2 Go | 10 Go (racine) | — |
+
+Le volume Cinder sur les OpenBao est recommandé pour : (a) découpler le stockage Raft du disque racine, (b) permettre un snapshot Cinder à froid avant opération sensible, (c) faciliter la reprise sur défaillance d'hyperviseur (re-attach rapide).
+
+### 0.5 Cloud-init minimal
+
+Image de base : Debian 13 (Trixie) officielle. Cloud-init doit au minimum :
+- Créer l'utilisateur `ansible` (ou équivalent) avec la clé publique du contrôleur.
+- Injecter `/etc/hosts` si le DNS interne n'est pas disponible avant Ansible.
+- Activer `qemu-guest-agent` (utile pour les snapshots Cinder cohérents).
+
+Ne **pas** activer `unattended-upgrades` sur les OpenBao : les mises à jour du paquet `bao` doivent rester manuelles et contrôlées (elles impliquent un unseal).
 
 ---
 
@@ -234,7 +314,7 @@ Régénération complète : nouvelle CA, nouveaux certs hôtes, redéploiement i
 ### 6.1 Préparation
 
 1. Provisionner la VM Debian 13 (Trixie) conformément au standard.
-2. Ajouter l'entrée dans `inventories/production/hosts.yml` (groupe `openbao`, avec `openbao_node_id`, `openbao_dc`, `ansible_host`).
+2. Ajouter l'entrée dans `inventories/production/hosts.yml` (groupe `openbao`, avec `openbao_node_id`, `openbao_az`, `ansible_host`).
 3. Déclarer son FQDN/IP dans le DNS interne.
 
 ### 6.2 Génération de son certificat

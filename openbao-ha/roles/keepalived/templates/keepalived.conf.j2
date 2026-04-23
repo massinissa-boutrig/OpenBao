@@ -1,7 +1,8 @@
 {{ ansible_managed | comment }}
 # ============================================================
-# keepalived — VRRP pour la VIP OpenBao du {{ haproxy_dc }}
-# Une instance VRRP par DC, isolée (VRID unique par DC).
+# keepalived — VRRP pour la VIP OpenBao (mono-DC OpenStack)
+# 1 seule VIP, 1 VRID, porté par ha-1 (MASTER) avec failover sur ha-2 (BACKUP).
+# La VIP doit être en allowed-address-pairs sur les ports Neutron des 2 HAProxy.
 # ============================================================
 
 global_defs {

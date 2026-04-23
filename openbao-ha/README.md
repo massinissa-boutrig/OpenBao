@@ -1,6 +1,6 @@
-# OpenBao HA — Déploiement Ansible multi-datacenter
+# OpenBao HA — Déploiement Ansible mono-DC sur OpenStack
 
-> Projet Ansible *production-grade* pour déployer **OpenBao** (fork open-source de HashiCorp Vault) en haute disponibilité sur trois datacenters, avec un cluster Raft unique partagé, des frontaux HAProxy actif/passif par DC et des VIP keepalived.
+> Projet Ansible *production-grade* pour déployer **OpenBao** (fork open-source de HashiCorp Vault) en haute disponibilité sur un unique datacenter OpenStack, avec un cluster Raft de 3 nœuds réparti sur 3 Availability Zones (anti-affinity), un frontal HAProxy actif/passif et une VIP keepalived.
 
 ---
 
@@ -25,18 +25,18 @@
 | Élément | Valeur |
 |---|---|
 | **Produit déployé** | OpenBao (fork open-source de HashiCorp Vault) |
-| **Mode HA** | Cluster Raft unique de 3 nœuds, un nœud par DC |
+| **Mode HA** | Cluster Raft 3 nœuds, 1 nœud par AZ OpenStack (anti-affinity) |
 | **Storage backend** | Raft Integrated Storage (pas de backend externe) |
 | **Seal/Unseal** | Shamir manuel — 5 parts, seuil de 3 |
 | **Load-balancing** | HAProxy en TCP passthrough, roundrobin |
-| **VIP** | 1 VIP par DC, gérée par keepalived (VRRP) |
+| **VIP** | 1 VIP unique gérée par keepalived (VRRP), portée par 2 HAProxy MASTER/BACKUP |
 | **TLS** | PKI interne, mTLS inter-nœuds, TLS 1.3 obligatoire |
 | **OS cible** | Debian 13 (Trixie) |
 | **Firewall** | nftables (politique drop par défaut) |
 | **Paquet OpenBao** | `.deb` officiel depuis GitHub releases (vérif SHA256) |
-| **Hyperviseur** | Proxmox VE |
+| **Plateforme** | OpenStack (Nova + Neutron + Cinder), 1 DC, 3 AZ |
 
-Le cluster OpenBao est **unique et partagé** entre les trois datacenters : un seul leader Raft à un instant T, deux *standby* qui répliquent l'état. Chaque DC dispose de sa propre VIP frontale (HAProxy actif/passif) qui distribue le trafic *en roundrobin sur les trois nœuds OpenBao* — c'est OpenBao lui-même qui forwarde les écritures vers le leader (le standby relaie de manière transparente).
+Le cluster OpenBao tourne sur 3 VMs réparties sur 3 Availability Zones OpenStack via un `ServerGroup` anti-affinity : un seul leader Raft à un instant T, deux *standby* qui répliquent l'état. La paire HAProxy (MASTER/BACKUP) porte une **VIP unique** via keepalived, déclarée en `allowed-address-pairs` sur les ports Neutron pour autoriser le bascule. HAProxy distribue le trafic *en roundrobin sur les trois nœuds OpenBao* — c'est OpenBao lui-même qui forwarde les écritures vers le leader (le standby relaie de manière transparente).
 
 ---
 
@@ -50,71 +50,58 @@ flowchart TB
     classDef vip fill:#dcfce7,stroke:#16a34a,stroke-dasharray:5 3,color:#14532d
     classDef ha fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
     classDef bao fill:#fef3c7,stroke:#d97706,color:#7c2d12
+    classDef az fill:#f1f5f9,stroke:#64748b,stroke-dasharray:3 3,color:#334155
     classDef dc fill:#f8fafc,stroke:#475569,stroke-width:2px
 
     Clients["👥 Clients<br/>(applications, opérateurs, CI/CD)"]:::client
 
-    subgraph DC_A ["🏢 Datacenter A"]
+    subgraph DC ["🌐 Datacenter OpenStack — ServerGroup anti-affinity"]
         direction TB
-        VIPA(["🟢 VIP A<br/>vip-bao-a.intra"]):::vip
-        HAA1["HAProxy A1<br/>MASTER · prio 110"]:::ha
-        HAA2["HAProxy A2<br/>BACKUP · prio 100"]:::ha
-        BAOA["🔐 bao-node-1<br/>Raft node-1"]:::bao
-        VIPA -.VRRP id 51.- HAA1
-        VIPA -.VRRP id 51.- HAA2
-        HAA1 --- HAA2
+        VIP(["🟢 VIP unique<br/>vip-bao.intra · 10.10.0.100<br/>allowed-address-pairs"]):::vip
+
+        subgraph AZ1 ["🏷️ AZ-1"]
+            HA1["HAProxy ha-1<br/>MASTER · prio 110"]:::ha
+            BAO1["🔐 bao-node-1<br/>Raft node-1"]:::bao
+        end
+
+        subgraph AZ2 ["🏷️ AZ-2"]
+            HA2["HAProxy ha-2<br/>BACKUP · prio 100"]:::ha
+            BAO2["🔐 bao-node-2<br/>Raft node-2"]:::bao
+        end
+
+        subgraph AZ3 ["🏷️ AZ-3"]
+            BAO3["🔐 bao-node-3<br/>Raft node-3"]:::bao
+        end
+
+        VIP -.VRRP id 51.- HA1
+        VIP -.VRRP id 51.- HA2
+        HA1 --- HA2
     end
 
-    subgraph DC_B ["🏢 Datacenter B"]
-        direction TB
-        VIPB(["🟢 VIP B<br/>vip-bao-b.intra"]):::vip
-        HAB1["HAProxy B1<br/>MASTER · prio 110"]:::ha
-        HAB2["HAProxy B2<br/>BACKUP · prio 100"]:::ha
-        BAOB["🔐 bao-node-2<br/>Raft node-2"]:::bao
-        VIPB -.VRRP id 52.- HAB1
-        VIPB -.VRRP id 52.- HAB2
-        HAB1 --- HAB2
-    end
+    class DC dc
+    class AZ1,AZ2,AZ3 az
 
-    subgraph DC_C ["🏢 Datacenter C"]
-        direction TB
-        VIPC(["🟢 VIP C<br/>vip-bao-c.intra"]):::vip
-        HAC1["HAProxy C1<br/>MASTER · prio 110"]:::ha
-        HAC2["HAProxy C2<br/>BACKUP · prio 100"]:::ha
-        BAOC["🔐 bao-node-3<br/>Raft node-3"]:::bao
-        VIPC -.VRRP id 53.- HAC1
-        VIPC -.VRRP id 53.- HAC2
-        HAC1 --- HAC2
-    end
+    Clients ==>|HTTPS 8200| VIP
 
-    class DC_A,DC_B,DC_C dc
+    HA1 -.TCP passthrough.-> BAO1
+    HA1 -.TCP passthrough.-> BAO2
+    HA1 -.TCP passthrough.-> BAO3
+    HA2 -.TCP passthrough.-> BAO1
+    HA2 -.TCP passthrough.-> BAO2
+    HA2 -.TCP passthrough.-> BAO3
 
-    Clients ==>|HTTPS 8200| VIPA
-    Clients ==>|HTTPS 8200| VIPB
-    Clients ==>|HTTPS 8200| VIPC
-
-    HAA1 -.TCP passthrough.-> BAOA
-    HAA1 -.TCP passthrough.-> BAOB
-    HAA1 -.TCP passthrough.-> BAOC
-    HAB1 -.TCP passthrough.-> BAOA
-    HAB1 -.TCP passthrough.-> BAOB
-    HAB1 -.TCP passthrough.-> BAOC
-    HAC1 -.TCP passthrough.-> BAOA
-    HAC1 -.TCP passthrough.-> BAOB
-    HAC1 -.TCP passthrough.-> BAOC
-
-    BAOA <==>|Raft mTLS 8201| BAOB
-    BAOB <==>|Raft mTLS 8201| BAOC
-    BAOA <==>|Raft mTLS 8201| BAOC
+    BAO1 <==>|Raft mTLS 8201| BAO2
+    BAO2 <==>|Raft mTLS 8201| BAO3
+    BAO1 <==>|Raft mTLS 8201| BAO3
 ```
 
 ### 2.2 Lecture du schéma
 
-Trois flux distincts circulent sur l'infrastructure. Le **flux client** (trait épais) part de n'importe quelle application et arrive sur la VIP du DC le plus proche, en HTTPS sur le port 8200 ; aucune logique d'affinité, le client peut taper n'importe quelle VIP. Le **flux load-balancing** (trait pointillé) descend de la VIP active vers HAProxy puis vers les trois nœuds OpenBao en TCP passthrough — la session TLS est terminée *par OpenBao*, jamais par HAProxy. Le **flux Raft** (trait épais bidirectionnel) est la réplication permanente entre les trois nœuds sur le port 8201 en mTLS, c'est lui qui garantit la cohérence du cluster.
+Trois flux distincts circulent sur l'infrastructure. Le **flux client** (trait épais) part de n'importe quelle application et arrive sur la VIP unique du DC, en HTTPS sur le port 8200. Le **flux load-balancing** (trait pointillé) descend de la VIP active (portée par ha-1 en nominal, ha-2 en bascule) vers HAProxy puis vers les trois nœuds OpenBao en TCP passthrough — la session TLS est terminée *par OpenBao*, jamais par HAProxy. Le **flux Raft** (trait épais bidirectionnel) est la réplication permanente entre les trois nœuds sur le port 8201 en mTLS, c'est lui qui garantit la cohérence du cluster, **inter-AZ** dans cette topologie.
 
 ### 2.3 Comportement en cas de panne
 
-Si un HAProxy MASTER tombe, keepalived bascule la VIP sur le BACKUP du même DC en moins de 3 secondes (script de check toutes les 2 s, transition VRRP immédiate). Si un nœud OpenBao tombe, les deux survivants conservent le quorum Raft (2/3) et continuent de servir : Raft élit un nouveau leader si nécessaire en quelques secondes. Si un DC entier tombe, les deux DC restants conservent le quorum (2/3) — le service reste disponible via les VIP des deux autres DC. **Si deux DC tombent simultanément, le quorum est perdu** : le cluster passe en lecture seule jusqu'au retour d'au moins un nœud, c'est le compromis assumé d'une topologie 1+1+1.
+Si HAProxy MASTER (ha-1) tombe, keepalived bascule la VIP sur le BACKUP (ha-2) en moins de 3 secondes (check toutes les 2 s, transition VRRP immédiate). Si un nœud OpenBao tombe, les deux survivants conservent le quorum Raft (2/3) et continuent de servir : Raft élit un nouveau leader si nécessaire en quelques secondes. Si une **AZ OpenStack entière tombe** (perte d'un hyperviseur, panne réseau d'AZ), le cluster perd au plus 1 OpenBao + 1 HAProxy → le quorum Raft est préservé (2/3) et la VIP reste disponible sur l'AZ survivante. **Si deux AZ tombent simultanément**, le quorum Raft est perdu : le cluster passe en lecture seule jusqu'au retour d'au moins un nœud — c'est le compromis assumé d'une topologie 3 nœuds. La perte du DC entier n'est *pas* couverte par cette architecture (mono-DC) ; pour cela, prévoir un cluster secondaire en DR avec snapshots Raft réguliers (cf. RUNBOOK §3).
 
 ---
 
@@ -129,9 +116,10 @@ Si un HAProxy MASTER tombe, keepalived bascule la VIP sur le BACKUP du même DC 
 | HAProxy mode | TCP passthrough | OpenBao garde la terminaison TLS de bout en bout |
 | Algorithme LB | roundrobin sans stickiness | OpenBao redirige nativement les écritures vers le leader |
 | Healthcheck | `GET /v1/sys/health?standbyok=true&perfstandbyok=true` accept 200/429 | Standby utile pour les lectures, leader pour les écritures |
-| VIP | keepalived VRRP, 1 VIP/DC | Pas de dépendance à du BGP ou de l'anycast |
+| VIP | keepalived VRRP, 1 VIP unique + allowed-address-pairs Neutron | Évite la dépendance à Octavia (LBaaS), bascule < 3 s |
 | Hardening systemd | Capabilities minimales + sandboxing complet | Réduction maximale de la surface d'attaque kernel |
-| Quorum | 3 nœuds 1+1+1 | Tolère la perte d'un DC complet |
+| Quorum | 3 nœuds répartis sur 3 AZ | Tolère la perte d'une AZ OpenStack |
+| Anti-affinity | ServerGroup Nova `anti-affinity` | Garantit que 2 OpenBao ne sont jamais sur le même hyperviseur |
 
 ---
 
@@ -145,25 +133,23 @@ Si un HAProxy MASTER tombe, keepalived bascule la VIP sur le BACKUP du même DC 
 | `8201/tcp` | Cluster Raft (mTLS) | Accept uniquement depuis les IPs des pairs Raft |
 | `8200/tcp` | VIP HAProxy frontend | Accept depuis tout |
 | `8404/tcp` | HAProxy stats | Accept depuis le set `stats_sources` (supervision) |
-| `protocole 112` | VRRP keepalived | Accept depuis le pair HAProxy du même DC (set `vrrp_peers`) |
+| `protocole 112` | VRRP keepalived | Accept depuis l'autre HAProxy (set `vrrp_peers`) |
+
+Ces ports doivent **aussi** être autorisés en amont dans les security groups Neutron (cf. RUNBOOK §0.2). nftables fait office de second filtre local.
 
 ### 4.2 Inventaire (modèle)
 
-| Hostname | DC | Rôle | IP exemple | VIP |
+| Hostname | AZ | Rôle | IP exemple | VIP |
 |---|---|---|---|---|
-| `bao-node-1` | A | OpenBao | `10.10.1.10` | — |
-| `bao-node-2` | B | OpenBao | `10.10.2.10` | — |
-| `bao-node-3` | C | OpenBao | `10.10.3.10` | — |
-| `ha-a1` | A | HAProxy MASTER | `10.10.1.11` | `10.10.1.100` |
-| `ha-a2` | A | HAProxy BACKUP | `10.10.1.12` | `10.10.1.100` |
-| `ha-b1` | B | HAProxy MASTER | `10.10.2.11` | `10.10.2.100` |
-| `ha-b2` | B | HAProxy BACKUP | `10.10.2.12` | `10.10.2.100` |
-| `ha-c1` | C | HAProxy MASTER | `10.10.3.11` | `10.10.3.100` |
-| `ha-c2` | C | HAProxy BACKUP | `10.10.3.12` | `10.10.3.100` |
+| `bao-node-1` | az-1 | OpenBao | `10.10.0.10` | — |
+| `bao-node-2` | az-2 | OpenBao | `10.10.0.11` | — |
+| `bao-node-3` | az-3 | OpenBao | `10.10.0.12` | — |
+| `ha-1` | az-1 | HAProxy MASTER | `10.10.0.21` | `10.10.0.100` |
+| `ha-2` | az-2 | HAProxy BACKUP | `10.10.0.22` | `10.10.0.100` |
 
 ### 4.3 DNS attendu
 
-Trois enregistrements A (un par VIP) : `vip-bao-a.intra`, `vip-bao-b.intra`, `vip-bao-c.intra`. Optionnellement un enregistrement *round-robin DNS* `bao.intra` pointant vers les trois VIP, à laisser au client le choix de basculer.
+Un seul enregistrement A : `vip-bao.intra` → `10.10.0.100` (la VIP keepalived). Les FQDN par hôte (`bao-node-1.intra`, etc.) sont nécessaires pour la validation des certificats mTLS Raft.
 
 ---
 
@@ -172,6 +158,8 @@ Trois enregistrements A (un par VIP) : `vip-bao-a.intra`, `vip-bao-b.intra`, `vi
 Côté contrôleur Ansible : Ansible 2.14+, Python 3.9+, accès SSH (clé) avec `sudo` sans mot de passe vers tous les hôtes cibles, les collections listées dans `requirements.yml`, et un Ansible Vault initialisé (`ansible-vault create inventories/production/group_vars/all/vault.yml`).
 
 Côté hôtes cibles : Debian 13 (Trixie) fraîchement installé, résolution DNS interne fonctionnelle pour tous les FQDN du cluster, accès sortant aux GitHub releases pour télécharger le `.deb` OpenBao (ou un mirror interne). Le rôle installe et active `nftables` (politique drop par défaut sauf SSH/8200/8201). Si SELinux est souhaité, installer en amont `selinux-basics` + `selinux-policy-default` puis `selinux-activate` et reboot — par défaut Debian 13 utilise AppArmor, le rôle se limite donc au sandboxing systemd qui est OS-agnostique.
+
+Côté OpenStack : 5 VMs Debian 13 provisionnées avec les bonnes contraintes (cf. RUNBOOK §0). Concrètement il faut un `ServerGroup` anti-affinity pour les 3 OpenBao, des security groups distincts pour openbao-nodes et haproxy-frontends, et surtout les `allowed-address-pairs` correctement positionnés sur les ports Neutron des HAProxy pour autoriser la VIP `10.10.0.100`. Sans ces deux derniers points, le cluster fonctionnera mais ne tolèrera ni la perte d'AZ ni la bascule keepalived.
 
 Côté humains : cinq opérateurs identifiés et formés pour détenir chacun **une** part Shamir, avec leur propre coffre offline (KeePass, YubiKey, etc.). **Sans ces cinq personnes, l'unseal après reboot est impossible.**
 
@@ -211,7 +199,7 @@ shred -u /tmp/init.json
 # Voir docs/RUNBOOK.md section "Initialisation du cluster"
 ```
 
-À l'issue de ces étapes, `bao operator raft list-peers` doit montrer les trois nœuds en *voter*, et un `curl -k https://vip-bao-a.intra:8200/v1/sys/health` doit retourner un 200 ou un 429.
+À l'issue de ces étapes, `bao operator raft list-peers` doit montrer les trois nœuds en *voter*, et un `curl -k https://vip-bao.intra:8200/v1/sys/health` doit retourner un 200 ou un 429.
 
 ---
 
@@ -227,7 +215,7 @@ openbao-ha/
 │   ├── pki.yml                        ← génération CA + certs hôtes
 │   └── backup.yml                     ← snapshot Raft du leader
 ├── inventories/production/
-│   ├── hosts.yml                      ← inventaire des 9 VMs
+│   ├── hosts.yml                      ← inventaire des 5 VMs (3 openbao + 2 haproxy)
 │   └── group_vars/
 │       ├── all/
 │       │   ├── main.yml               ← variables globales

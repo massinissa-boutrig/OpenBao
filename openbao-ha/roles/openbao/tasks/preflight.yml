@@ -12,9 +12,9 @@
     that:
       - openbao_node_id is defined
       - openbao_node_id | length > 0
-      - openbao_dc is defined
-      - openbao_dc | length > 0
-    fail_msg: "openbao_node_id et openbao_dc doivent être définis dans l'inventaire pour {{ inventory_hostname }}."
+      - openbao_az is defined
+      - openbao_az | length > 0
+    fail_msg: "openbao_node_id et openbao_az doivent être définis dans l'inventaire pour {{ inventory_hostname }}."
 
 - name: Assert OpenBao checksum is set and valid (64 hex chars)
   ansible.builtin.assert:

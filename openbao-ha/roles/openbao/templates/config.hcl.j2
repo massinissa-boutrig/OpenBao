@@ -1,7 +1,7 @@
 {{ ansible_managed | comment }}
 # ============================================================
-# OpenBao — configuration HCL pour {{ inventory_hostname }} ({{ openbao_dc }})
-# Cluster Raft 1+1+1 multi-DC, mTLS, TLS 1.3 only.
+# OpenBao — configuration HCL pour {{ inventory_hostname }} (AZ {{ openbao_az }})
+# Cluster Raft 3 nœuds mono-DC OpenStack (3 AZ), mTLS, TLS 1.3 only.
 # Pas de bloc seal → Shamir implicite.
 # ============================================================
 

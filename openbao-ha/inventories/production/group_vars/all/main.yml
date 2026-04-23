@@ -54,11 +54,8 @@ openbao_tls_cipher_suites:
   - "TLS_AES_128_GCM_SHA256"
 
 # --- VIP / DNS HAProxy ---
-# Mapping logique DC → FQDN de la VIP frontale
-vip_dns_map:
-  dc-a: "vip-bao-a.{{ internal_domain }}"
-  dc-b: "vip-bao-b.{{ internal_domain }}"
-  dc-c: "vip-bao-c.{{ internal_domain }}"
+# FQDN de la VIP frontale (VIP keepalived unique, mono-DC OpenStack).
+openbao_vip_fqdn: "vip-bao.{{ internal_domain }}"
 
 # --- HAProxy : sources autorisées pour les stats (supervision) ---
 haproxy_stats_allowed_sources:
