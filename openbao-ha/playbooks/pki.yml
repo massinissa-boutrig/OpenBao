@@ -1,0 +1,129 @@
+---
+# ============================================================
+# Génération de la PKI interne (CA + cert/clé par nœud OpenBao)
+# Exécuté UNIQUEMENT sur le contrôleur Ansible (localhost).
+# Sortie : ./pki/ca.{key,crt} + ./pki/<host>.{key,crt}
+# ============================================================
+- name: Génération de la PKI interne pour OpenBao HA
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  vars:
+    pki_ca_key: "{{ pki_dir }}/ca.key"
+    pki_ca_csr: "{{ pki_dir }}/ca.csr"
+    pki_ca_crt: "{{ pki_dir }}/ca.crt"
+
+  tasks:
+
+    # --- Préparation du répertoire ---
+    - name: Create PKI directory (mode 0700)
+      ansible.builtin.file:
+        path: "{{ pki_dir }}"
+        state: directory
+        mode: "0700"
+
+    # --- CA racine ---
+    - name: Generate CA private key (RSA 4096, encrypted)
+      community.crypto.openssl_privatekey:
+        path: "{{ pki_ca_key }}"
+        size: 4096
+        type: RSA
+        cipher: auto
+        passphrase: "{{ pki_ca_passphrase }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Generate CA CSR (self-signed)
+      community.crypto.openssl_csr:
+        path: "{{ pki_ca_csr }}"
+        privatekey_path: "{{ pki_ca_key }}"
+        privatekey_passphrase: "{{ pki_ca_passphrase }}"
+        common_name: "{{ pki_common_name_ca }}"
+        country_name: "{{ pki_country }}"
+        state_or_province_name: "{{ pki_state }}"
+        locality_name: "{{ pki_locality }}"
+        organization_name: "{{ pki_organization }}"
+        organizational_unit_name: "{{ pki_organizational_unit }}"
+        basic_constraints:
+          - "CA:TRUE"
+        basic_constraints_critical: true
+        key_usage:
+          - keyCertSign
+          - cRLSign
+        key_usage_critical: true
+        mode: "0600"
+      no_log: true
+
+    - name: Generate CA self-signed certificate (10 years)
+      community.crypto.x509_certificate:
+        path: "{{ pki_ca_crt }}"
+        privatekey_path: "{{ pki_ca_key }}"
+        privatekey_passphrase: "{{ pki_ca_passphrase }}"
+        csr_path: "{{ pki_ca_csr }}"
+        provider: selfsigned
+        selfsigned_not_after: "+{{ pki_ca_validity_days }}d"
+        mode: "0644"
+      no_log: true
+
+    # --- Certificats hôtes (un par nœud OpenBao) ---
+    - name: Generate host private key
+      community.crypto.openssl_privatekey:
+        path: "{{ pki_dir }}/{{ item }}.key"
+        size: 4096
+        type: RSA
+        mode: "0600"
+      loop: "{{ groups['openbao'] }}"
+      no_log: true
+
+    - name: Generate host CSR with proper SANs
+      community.crypto.openssl_csr:
+        path: "{{ pki_dir }}/{{ item }}.csr"
+        privatekey_path: "{{ pki_dir }}/{{ item }}.key"
+        common_name: "{{ item }}.{{ internal_domain }}"
+        country_name: "{{ pki_country }}"
+        state_or_province_name: "{{ pki_state }}"
+        locality_name: "{{ pki_locality }}"
+        organization_name: "{{ pki_organization }}"
+        organizational_unit_name: "{{ pki_organizational_unit }}"
+        subject_alt_name:
+          - "DNS:{{ item }}"
+          - "DNS:{{ item }}.{{ internal_domain }}"
+          - "DNS:localhost"
+          - "IP:{{ hostvars[item].ansible_host }}"
+          - "IP:127.0.0.1"
+        key_usage:
+          - digitalSignature
+          - keyEncipherment
+        extended_key_usage:
+          - serverAuth
+          - clientAuth          # nécessaire pour mTLS Raft
+        mode: "0644"
+      loop: "{{ groups['openbao'] }}"
+
+    - name: Sign host certificate with internal CA (1 year)
+      community.crypto.x509_certificate:
+        path: "{{ pki_dir }}/{{ item }}.crt"
+        csr_path: "{{ pki_dir }}/{{ item }}.csr"
+        ownca_path: "{{ pki_ca_crt }}"
+        ownca_privatekey_path: "{{ pki_ca_key }}"
+        ownca_privatekey_passphrase: "{{ pki_ca_passphrase }}"
+        ownca_not_after: "+{{ pki_cert_validity_days }}d"
+        provider: ownca
+        mode: "0644"
+      loop: "{{ groups['openbao'] }}"
+      no_log: true
+
+    - name: Cleanup CSR files
+      ansible.builtin.file:
+        path: "{{ pki_dir }}/{{ item }}.csr"
+        state: absent
+      loop: "{{ groups['openbao'] }}"
+
+    - name: PKI summary
+      ansible.builtin.debug:
+        msg:
+          - "PKI générée dans {{ pki_dir }}/"
+          - "  CA      : ca.crt (validité {{ pki_ca_validity_days }} jours)"
+          - "  Hôtes   : {{ groups['openbao'] | join(', ') }} (validité {{ pki_cert_validity_days }} jours)"

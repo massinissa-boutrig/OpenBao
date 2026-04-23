@@ -1,0 +1,83 @@
+---
+# ============================================================
+# Snapshot Raft d'OpenBao depuis le leader détecté dynamiquement.
+# Authentification : token dédié (vault), policy minimaliste.
+# ============================================================
+- name: Snapshot Raft du cluster OpenBao
+  hosts: openbao
+  become: true
+  gather_facts: true
+
+  vars:
+    backup_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    snapshot_filename: "snapshot-{{ backup_timestamp }}.snap"
+    snapshot_path_local: "{{ openbao_backup_dir }}/{{ snapshot_filename }}"
+
+  tasks:
+
+    - name: Ensure backup directory exists
+      ansible.builtin.file:
+        path: "{{ openbao_backup_dir }}"
+        state: directory
+        owner: "{{ openbao_user }}"
+        group: "{{ openbao_group }}"
+        mode: "0700"
+
+    - name: Get OpenBao status (detect leader)
+      ansible.builtin.command: "{{ openbao_binary_path }} status -format=json"
+      environment:
+        BAO_ADDR: "https://127.0.0.1:{{ openbao_api_port }}"
+        BAO_CACERT: "{{ openbao_tls_dir }}/ca.crt"
+      register: bao_status
+      changed_when: false
+      failed_when: false
+      check_mode: false
+
+    - name: Set leader fact
+      ansible.builtin.set_fact:
+        is_leader: >-
+          {{ (bao_status.stdout | from_json).ha_enabled | default(false)
+             and (bao_status.stdout | from_json).is_self | default(false) }}
+      when: bao_status.stdout | length > 0
+
+    - name: Take Raft snapshot (only on leader)
+      ansible.builtin.command:
+        cmd: "{{ openbao_binary_path }} operator raft snapshot save {{ snapshot_path_local }}"
+      environment:
+        BAO_ADDR: "https://127.0.0.1:{{ openbao_api_port }}"
+        BAO_CACERT: "{{ openbao_tls_dir }}/ca.crt"
+        BAO_TOKEN: "{{ openbao_backup_token }}"
+      when: is_leader | default(false)
+      register: snapshot_result
+      changed_when: snapshot_result.rc == 0
+      no_log: true
+
+    - name: Set ownership/perms on snapshot
+      ansible.builtin.file:
+        path: "{{ snapshot_path_local }}"
+        owner: "{{ openbao_user }}"
+        group: "{{ openbao_group }}"
+        mode: "0600"
+      when: is_leader | default(false)
+
+    - name: Cleanup local snapshots older than retention
+      ansible.builtin.find:
+        paths: "{{ openbao_backup_dir }}"
+        patterns: "snapshot-*.snap"
+        age: "{{ openbao_backup_retention_days }}d"
+      register: old_snapshots
+      when: is_leader | default(false)
+
+    - name: Remove old snapshots
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ old_snapshots.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: is_leader | default(false)
+
+    - name: Snapshot summary
+      ansible.builtin.debug:
+        msg: "Snapshot pris sur {{ inventory_hostname }} (leader) → {{ snapshot_path_local }}"
+      when: is_leader | default(false)

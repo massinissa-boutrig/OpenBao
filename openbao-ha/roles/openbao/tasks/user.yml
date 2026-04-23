@@ -24,7 +24,7 @@
     mode: "{{ item.mode }}"
   loop:
     - { path: "{{ openbao_config_dir }}", mode: "0750" }
-    - { path: "{{ openbao_tls_dir }}",    mode: "0750" }
-    - { path: "{{ openbao_data_dir }}",   mode: "0700" }
-    - { path: "{{ openbao_raft_dir }}",   mode: "0700" }
-    - { path: "{{ openbao_log_dir }}",    mode: "0750" }
+    - { path: "{{ openbao_tls_dir }}", mode: "0750" }
+    - { path: "{{ openbao_data_dir }}", mode: "0700" }
+    - { path: "{{ openbao_raft_dir }}", mode: "0700" }
+    - { path: "{{ openbao_log_dir }}", mode: "0750" }
