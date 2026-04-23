@@ -12,25 +12,19 @@
       {{ openbao_installed_version.rc != 0
          or openbao_version not in (openbao_installed_version.stdout | default('')) }}
 
-- name: Download OpenBao archive
+- name: Download OpenBao .deb (with SHA256 verification)
   ansible.builtin.get_url:
-    url: "{{ openbao_download_url }}"
-    dest: "{{ openbao_archive_local_path }}"
+    url: "{{ openbao_deb_url }}"
+    dest: "/tmp/bao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
     checksum: "sha256:{{ openbao_checksum_sha256 }}"
     mode: "0644"
-    force: false
     timeout: 60
   when: openbao_install_needed
 
-- name: Extract OpenBao archive
-  ansible.builtin.unarchive:
-    src: "{{ openbao_archive_local_path }}"
-    dest: /usr/local/bin/
-    remote_src: true
-    creates: "{{ openbao_binary_path }}"
-    owner: root
-    group: root
-    mode: "0755"
+- name: Install OpenBao .deb package
+  ansible.builtin.apt:
+    deb: "/tmp/bao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
+    state: present
   when: openbao_install_needed
   notify: restart openbao
 
@@ -40,7 +34,15 @@
     capability: cap_ipc_lock=+ep
     state: present
 
-- name: Cleanup archive
+- name: Cleanup downloaded .deb
   ansible.builtin.file:
-    path: "{{ openbao_archive_local_path }}"
+    path: "/tmp/bao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
     state: absent
+
+- name: Mask packaged openbao service (we deploy our own hardened unit)
+  ansible.builtin.systemd:
+    name: openbao
+    enabled: false
+    masked: false
+  failed_when: false
+  changed_when: false

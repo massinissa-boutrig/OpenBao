@@ -1,13 +1,16 @@
 ---
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [keepalived, packages]
+
 - name: Install keepalived and helpers
-  ansible.builtin.dnf:
+  ansible.builtin.apt:
     name:
       - keepalived
       - psmisc
-      - firewalld
-      - python3-firewall
     state: present
-    update_cache: true
   tags: [keepalived, packages]
 
 - name: Deploy HAProxy check script
@@ -29,23 +32,17 @@
   notify: restart keepalived
   tags: [keepalived, config]
 
-- name: Allow keepalived to bind any port (SELinux)
-  ansible.posix.seboolean:
-    name: keepalived_connect_any
-    state: true
-    persistent: true
-  tags: [keepalived, selinux]
+# NB : l'autorisation VRRP (proto 112) est posée dans la table nftables
+# du rôle haproxy, qui partage le même hôte. Pas besoin de double règle ici.
 
-- name: Allow VRRP (proto 112) from peer HAProxy in same DC
-  ansible.posix.firewalld:
-    rich_rule: "rule family=ipv4 source address={{ hostvars[item].ansible_host }}/32 protocol value=\"112\" accept"
-    zone: public
-    permanent: true
-    immediate: true
-    state: enabled
-  loop: "{{ groups[haproxy_dc | replace('-', '_')] }}"
-  when: item != inventory_hostname
-  tags: [keepalived, firewall]
+- name: Enable IP non-local bind (allows binding the VIP before it exists)
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    sysctl_set: true
+    state: present
+    reload: true
+  tags: [keepalived, sysctl]
 
 - name: Enable and start keepalived
   ansible.builtin.systemd:

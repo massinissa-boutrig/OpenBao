@@ -56,7 +56,7 @@ backend openbao_backend
 {% endfor %}
 
 # ------------------------------------------------------------
-# Stats — auth requise, restreint par firewalld
+# Stats — auth requise, restreint par nftables (set stats_sources)
 # ------------------------------------------------------------
 frontend stats
     bind *:{{ haproxy_stats_port }}

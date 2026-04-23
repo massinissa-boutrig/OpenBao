@@ -17,14 +17,15 @@ pki_ca_validity_days: 3650        # 10 ans pour la CA racine
 pki_cert_validity_days: 365       # 1 an pour les certs hôtes
 pki_dir: "{{ playbook_dir }}/../pki"
 
-# --- OpenBao : version et binaire ---
-openbao_version: "2.4.1"          # adapter à la dernière stable
+# --- OpenBao : version et paquet .deb officiel ---
+openbao_version: "2.5.0"          # dernière stable au moment de la rédaction
 # Renseigner le SHA256 depuis https://github.com/openbao/openbao/releases
-# openbao_<version>_linux_amd64.zip
+# bao_<version>_linux_amd64.deb (champ "Digest" sur la page release).
 openbao_checksum_sha256: "CHANGEME_REPLACE_WITH_REAL_SHA256_64_HEX_CHARS_____________________"
 openbao_arch: amd64
-openbao_download_url: "https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}/bao_{{ openbao_version }}_linux_{{ openbao_arch }}.zip"
-openbao_binary_path: /usr/local/bin/bao
+openbao_deb_url: "https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}/bao_{{ openbao_version }}_linux_{{ openbao_arch }}.deb"
+# Le paquet .deb installe /usr/bin/bao
+openbao_binary_path: /usr/bin/bao
 
 # --- OpenBao : utilisateur système ---
 openbao_user: openbao

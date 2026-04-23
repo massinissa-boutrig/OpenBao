@@ -1,6 +1,6 @@
 # RUNBOOK — OpenBao HA multi-DC
 
-> Procédures d'exploitation à destination des opérateurs habilités. Toutes les commandes `bao` supposent que l'environnement `BAO_ADDR=https://127.0.0.1:8200` et `BAO_CACERT=/etc/openbao/tls/ca.crt` est positionné (cf. `/etc/sysconfig/openbao`).
+> Procédures d'exploitation à destination des opérateurs habilités. Toutes les commandes `bao` supposent que l'environnement `BAO_ADDR=https://127.0.0.1:8200` et `BAO_CACERT=/etc/openbao/tls/ca.crt` est positionné (cf. `/etc/default/openbao`). Le binaire OpenBao est en `/usr/bin/bao` (paquet .deb officiel).
 
 ---
 
@@ -233,7 +233,7 @@ Régénération complète : nouvelle CA, nouveaux certs hôtes, redéploiement i
 
 ### 6.1 Préparation
 
-1. Provisionner la VM RHEL 9 conformément au standard.
+1. Provisionner la VM Debian 13 (Trixie) conformément au standard.
 2. Ajouter l'entrée dans `inventories/production/hosts.yml` (groupe `openbao`, avec `openbao_node_id`, `openbao_dc`, `ansible_host`).
 3. Déclarer son FQDN/IP dans le DNS interne.
 
@@ -333,14 +333,14 @@ ssh ha-a1
 ip addr show <interface>     # la VIP doit apparaître sur le MASTER actif
 ```
 
-Si la VIP n'apparaît nulle part : `journalctl -u keepalived` sur les deux pairs, vérifier que VRRP n'est pas bloqué par firewalld (rich rule `protocol value="112"` requise).
+Si la VIP n'apparaît nulle part : `journalctl -u keepalived` sur les deux pairs, vérifier que VRRP n'est pas bloqué par nftables (le set `vrrp_peers` doit contenir l'IP du pair, vérifier avec `nft list set inet filter vrrp_peers`).
 
 ### 8.5 Cas typiques
 
-**« Le service openbao ne démarre pas, code 1 »** : presque toujours un problème de mlock. Vérifier `getcap /usr/local/bin/bao` (doit retourner `cap_ipc_lock=ep`), puis `journalctl -u openbao` pour la stack précise.
+**« Le service openbao ne démarre pas, code 1 »** : presque toujours un problème de mlock. Vérifier `getcap /usr/bin/bao` (doit retourner `cap_ipc_lock=ep`), puis `journalctl -u openbao` pour la stack précise.
 
 **« retry_join boucle en erreur TLS »** : vérifier que le SAN du certificat du nœud cible inclut bien l'IP utilisée dans `cluster_addr` ET le FQDN. C'est le piège le plus fréquent.
 
-**« HAProxy report tous les backends DOWN alors que les nœuds sont up »** : le seboolean `haproxy_connect_any` est désactivé, ou la CA interne n'est pas dans `/etc/haproxy/ca.crt`. Tester avec `openssl s_client -CAfile /etc/haproxy/ca.crt -connect bao-node-1:8200`.
+**« HAProxy report tous les backends DOWN alors que les nœuds sont up »** : la CA interne n'est pas dans `/etc/haproxy/ca.crt`, ou nftables bloque la sortie HAProxy → OpenBao. Tester avec `openssl s_client -CAfile /etc/haproxy/ca.crt -connect bao-node-1:8200` puis `journalctl -u nftables` et `nft list ruleset`.
 
 **« Un opérateur a perdu sa clé Shamir »** : avec un seuil 5/3, on peut perdre **2 clés sur 5** sans incident. Au-delà, **regénération des unseal keys obligatoire** via `bao operator rekey -init -key-shares=5 -key-threshold=3` et nouvelle cérémonie.

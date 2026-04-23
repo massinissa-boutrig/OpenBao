@@ -1,10 +1,11 @@
 ---
-- name: Assert RHEL/Rocky/Alma 9 family
+- name: Assert Debian 13 (Trixie)
   ansible.builtin.assert:
     that:
-      - ansible_os_family == "RedHat"
-      - ansible_distribution_major_version | int >= 9
-    fail_msg: "Ce rôle ne supporte que RHEL 9 / Rocky 9 / AlmaLinux 9 (détecté : {{ ansible_distribution }} {{ ansible_distribution_version }})."
+      - ansible_os_family == "Debian"
+      - ansible_distribution == "Debian"
+      - ansible_distribution_major_version | int >= 13
+    fail_msg: "Ce rôle ne supporte que Debian 13+ (détecté : {{ ansible_distribution }} {{ ansible_distribution_version }})."
 
 - name: Assert required host vars are defined
   ansible.builtin.assert:
@@ -21,12 +22,19 @@
       - openbao_checksum_sha256 is defined
       - openbao_checksum_sha256 | length == 64
       - openbao_checksum_sha256 is match("^[a-fA-F0-9]{64}$")
-    fail_msg: "openbao_checksum_sha256 doit être renseigné dans group_vars/all/main.yml (SHA256 du binaire, 64 caractères hex)."
+    fail_msg: "openbao_checksum_sha256 doit être renseigné dans group_vars/all/main.yml (SHA256 du .deb, 64 caractères hex)."
 
-- name: Assert SELinux is enforcing
-  ansible.builtin.assert:
-    that:
-      - ansible_selinux is defined
-      - ansible_selinux.status == "enabled"
-      - ansible_selinux.mode == "enforcing"
-    fail_msg: "SELinux doit être en enforcing sur les nœuds OpenBao (mode actuel : {{ ansible_selinux.mode | default('disabled') }})."
+- name: Check SELinux status (warn-only — Debian SELinux est en option)
+  ansible.builtin.command: getenforce
+  register: selinux_state
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Warn if SELinux is not enforcing
+  ansible.builtin.debug:
+    msg: >-
+      ATTENTION : SELinux n'est pas en enforcing (état actuel : {{ selinux_state.stdout | default('absent') }}).
+      Sur Debian, installer selinux-basics + selinux-policy-default puis :
+      sudo selinux-activate && sudo reboot.
+  when: selinux_state.rc != 0 or selinux_state.stdout != 'Enforcing'

@@ -46,10 +46,10 @@
   no_log: true
   notify: restart openbao
 
-- name: Add internal CA to system trust store
+- name: Add internal CA to system trust store (Debian)
   ansible.builtin.copy:
     src: "{{ pki_dir }}/ca.crt"
-    dest: /etc/pki/ca-trust/source/anchors/openbao-internal-ca.crt
+    dest: /usr/local/share/ca-certificates/openbao-internal-ca.crt
     owner: root
     group: root
     mode: "0644"

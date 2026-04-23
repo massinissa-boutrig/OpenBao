@@ -31,7 +31,9 @@
 | **Load-balancing** | HAProxy en TCP passthrough, roundrobin |
 | **VIP** | 1 VIP par DC, gérée par keepalived (VRRP) |
 | **TLS** | PKI interne, mTLS inter-nœuds, TLS 1.3 obligatoire |
-| **OS cible** | RHEL 9 (compatible Rocky 9 / AlmaLinux 9) |
+| **OS cible** | Debian 13 (Trixie) |
+| **Firewall** | nftables (politique drop par défaut) |
+| **Paquet OpenBao** | `.deb` officiel depuis GitHub releases (vérif SHA256) |
 | **Hyperviseur** | Proxmox VE |
 
 Le cluster OpenBao est **unique et partagé** entre les trois datacenters : un seul leader Raft à un instant T, deux *standby* qui répliquent l'état. Chaque DC dispose de sa propre VIP frontale (HAProxy actif/passif) qui distribue le trafic *en roundrobin sur les trois nœuds OpenBao* — c'est OpenBao lui-même qui forwarde les écritures vers le leader (le standby relaie de manière transparente).
@@ -137,13 +139,13 @@ Si un HAProxy MASTER tombe, keepalived bascule la VIP sur le BACKUP du même DC 
 
 ### 4.1 Ports
 
-| Port | Usage | Exposition firewalld |
+| Port | Usage | Règle nftables |
 |---|---|---|
-| `8200/tcp` | API OpenBao (TLS 1.3) | Zone `public` ouverte |
-| `8201/tcp` | Cluster Raft (mTLS) | Restreint aux IPs des pairs Raft (rich rules) |
-| `8200/tcp` | VIP HAProxy frontend | Zone `public` ouverte |
-| `8404/tcp` | HAProxy stats | Restreint aux IPs de supervision |
-| `protocole 112` | VRRP keepalived | Restreint au pair HAProxy du même DC |
+| `8200/tcp` | API OpenBao (TLS 1.3) | Accept depuis tout |
+| `8201/tcp` | Cluster Raft (mTLS) | Accept uniquement depuis les IPs des pairs Raft |
+| `8200/tcp` | VIP HAProxy frontend | Accept depuis tout |
+| `8404/tcp` | HAProxy stats | Accept depuis le set `stats_sources` (supervision) |
+| `protocole 112` | VRRP keepalived | Accept depuis le pair HAProxy du même DC (set `vrrp_peers`) |
 
 ### 4.2 Inventaire (modèle)
 
@@ -169,7 +171,7 @@ Trois enregistrements A (un par VIP) : `vip-bao-a.intra`, `vip-bao-b.intra`, `vi
 
 Côté contrôleur Ansible : Ansible 2.14+, Python 3.9+, accès SSH (clé) avec `sudo` sans mot de passe vers tous les hôtes cibles, les collections listées dans `requirements.yml`, et un Ansible Vault initialisé (`ansible-vault create inventories/production/group_vars/all/vault.yml`).
 
-Côté hôtes cibles : RHEL 9 / Rocky 9 / AlmaLinux 9 fraîchement installé, `firewalld` et `selinux` activés (enforcing), résolution DNS interne fonctionnelle pour tous les FQDN du cluster, accès sortant aux GitHub releases pour télécharger le binaire OpenBao (ou un mirror interne).
+Côté hôtes cibles : Debian 13 (Trixie) fraîchement installé, résolution DNS interne fonctionnelle pour tous les FQDN du cluster, accès sortant aux GitHub releases pour télécharger le `.deb` OpenBao (ou un mirror interne). Le rôle installe et active `nftables` (politique drop par défaut sauf SSH/8200/8201). Si SELinux est souhaité, installer en amont `selinux-basics` + `selinux-policy-default` puis `selinux-activate` et reboot — par défaut Debian 13 utilise AppArmor, le rôle se limite donc au sandboxing systemd qui est OS-agnostique.
 
 Côté humains : cinq opérateurs identifiés et formés pour détenir chacun **une** part Shamir, avec leur propre coffre offline (KeePass, YubiKey, etc.). **Sans ces cinq personnes, l'unseal après reboot est impossible.**
 
@@ -201,7 +203,7 @@ ansible-playbook playbooks/site.yml --ask-vault-pass
 
 # 7. Initialiser le cluster — UNE SEULE FOIS, depuis bao-node-1
 ssh bao-node-1
-sudo -u openbao bao operator init -key-shares=5 -key-threshold=3 -format=json > /tmp/init.json
+sudo -u openbao /usr/bin/bao operator init -key-shares=5 -key-threshold=3 -format=json > /tmp/init.json
 # → distribuer immédiatement les 5 unseal keys et le root token, puis :
 shred -u /tmp/init.json
 
@@ -233,7 +235,7 @@ openbao-ha/
 │       ├── openbao.yml
 │       └── haproxy.yml
 ├── roles/
-│   ├── openbao/                       ← rôle principal (binaire, TLS, config, systemd, firewalld)
+│   ├── openbao/                       ← rôle principal (paquet .deb, TLS, config, systemd, nftables)
 │   ├── haproxy/                       ← TCP passthrough + healthcheck OpenBao
 │   └── keepalived/                    ← VRRP + script check_haproxy
 └── docs/
@@ -249,7 +251,7 @@ L'unit systemd `openbao.service` applique un sandboxing systemd complet : capabi
 
 Le binaire `bao` reçoit la capability `cap_ipc_lock=+ep` via `setcap`, ce qui permet d'utiliser `mlock()` sans tourner en root et donc d'empêcher le swap des secrets sur disque (`disable_mlock = false` dans la config).
 
-Le firewalld n'expose que ce qui est strictement nécessaire : 8200/tcp en zone publique pour l'API, 8201/tcp uniquement aux IPs des autres pairs Raft via rich rules. SELinux reste en `enforcing` ; les seules booléens activés sont `haproxy_connect_any` et `keepalived_connect_any`, justifiés par le fonctionnement attendu de ces démons.
+nftables n'expose que ce qui est strictement nécessaire : politique `drop` par défaut sur la chaîne `input`, puis `accept` explicite pour SSH (22), pour l'API OpenBao (8200) et pour le port Raft 8201 *uniquement depuis les IPs des autres pairs* (générées dynamiquement depuis l'inventaire). Sur les HAProxy, deux sets nftables (`stats_sources` et `vrrp_peers`) restreignent respectivement la page stats à la supervision et VRRP au pair HAProxy du même DC. La politique de défaut est journalisée (rate-limited 5/min) pour faciliter le diagnostic.
 
 Les secrets sensibles (passphrase de la CA, mot de passe stats HAProxy, mot de passe VRRP) sont dans Ansible Vault. **Les unseal keys Shamir et le root token ne sont JAMAIS dans Ansible Vault** — ils sont distribués manuellement à cinq opérateurs distincts, qui les conservent dans leur propre coffre offline.
 

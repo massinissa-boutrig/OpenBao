@@ -10,5 +10,10 @@
     state: restarted
 
 - name: update ca trust
-  ansible.builtin.command: /usr/bin/update-ca-trust extract
+  ansible.builtin.command: /usr/sbin/update-ca-certificates
   changed_when: true
+
+- name: reload nftables
+  ansible.builtin.systemd:
+    name: nftables
+    state: reloaded

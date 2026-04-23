@@ -3,14 +3,14 @@ galaxy_info:
   role_name: openbao
   namespace: acme
   author: Acme Corp Platform Engineering
-  description: Deploy OpenBao in HA on RHEL 9 with Raft Integrated Storage, Shamir seal, mTLS.
+  description: Deploy OpenBao in HA on Debian 13 with Raft Integrated Storage, Shamir seal, mTLS.
   company: Acme Corp
   license: Apache-2.0
   min_ansible_version: "2.14"
   platforms:
-    - name: EL
+    - name: Debian
       versions:
-        - "9"
+        - trixie
   galaxy_tags:
     - openbao
     - vault

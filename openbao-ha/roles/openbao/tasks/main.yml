@@ -28,7 +28,7 @@
   ansible.builtin.import_tasks: systemd.yml
   tags: [openbao, systemd]
 
-- name: Configure firewalld
+- name: Configure nftables firewall
   ansible.builtin.import_tasks: firewall.yml
   tags: [openbao, firewall]
 

@@ -1,19 +1,24 @@
 ---
+- name: Update apt cache (max 1h old)
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Install required OS packages
-  ansible.builtin.dnf:
+  ansible.builtin.apt:
     name:
-      - unzip
-      - firewalld
-      - python3-firewall
-      - policycoreutils-python-utils
+      - nftables
+      - ca-certificates
       - logrotate
       - jq
-      - libcap                # pour setcap (cap_ipc_lock)
+      - libcap2-bin                # pour setcap (cap_ipc_lock si besoin)
+      - selinux-basics             # support SELinux Debian (optionnel)
+      - selinux-policy-default
+      - policycoreutils
     state: present
-    update_cache: true
 
-- name: Ensure firewalld is enabled and running
+- name: Ensure nftables is enabled and running
   ansible.builtin.systemd:
-    name: firewalld
+    name: nftables
     state: started
     enabled: true

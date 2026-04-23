@@ -11,7 +11,7 @@
 - name: Deploy environment file (BAO_ADDR, BAO_CACERT, ...)
   ansible.builtin.template:
     src: openbao.env.j2
-    dest: /etc/sysconfig/openbao
+    dest: /etc/default/openbao
     owner: root
     group: "{{ openbao_group }}"
     mode: "0640"

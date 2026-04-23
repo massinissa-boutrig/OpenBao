@@ -12,7 +12,7 @@ StartLimitBurst=3
 Type=notify
 User={{ openbao_user }}
 Group={{ openbao_group }}
-EnvironmentFile=/etc/sysconfig/openbao
+EnvironmentFile=/etc/default/openbao
 ExecStart={{ openbao_binary_path }} server -config={{ openbao_config_dir }}/config.hcl
 ExecReload=/bin/kill --signal HUP $MAINPID
 KillMode=process
