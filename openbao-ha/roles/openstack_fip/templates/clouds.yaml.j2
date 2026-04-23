@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+# clouds.yaml — credentials Neutron pour le failover de Floating IP.
+# Lecture limitée à root et au groupe {{ fip_system_group }} (mode 0640).
+clouds:
+  openbao_fip:
+    auth:
+      auth_url: "{{ openstack_auth.auth_url }}"
+      username: "{{ openstack_auth.username }}"
+      password: "{{ openstack_auth.password }}"
+      project_name: "{{ openstack_auth.project_name }}"
+      project_domain_name: "{{ openstack_auth.project_domain_name | default('Default') }}"
+      user_domain_name: "{{ openstack_auth.user_domain_name | default('Default') }}"
+    region_name: "{{ openstack_auth.region_name | default('RegionOne') }}"
+    interface: "{{ openstack_auth.interface | default('public') }}"
+    identity_api_version: 3

@@ -28,9 +28,33 @@ pki_ca_passphrase: "CHANGEME_long_random_passphrase_for_internal_CA_private_key"
 # Mot de passe pour la page stats HAProxy (user "admin").
 haproxy_stats_password: "CHANGEME_haproxy_stats_admin_password"
 
-# Mot de passe partagé VRRP entre HAProxy MASTER et BACKUP d'un même DC.
-# Authentification PASS — 8 caractères max (limitation keepalived/VRRP).
-keepalived_auth_pass: "CHANGEM8"
+# ============================================================
+# Compte OpenStack pour le failover Floating IP (rôle openstack_fip)
+# ============================================================
+# ⚠️ Le compte doit avoir le MINIMUM de privilèges Neutron :
+#   - GET   /v2.0/floatingips/{id}        (lire l'état actuel)
+#   - PUT   /v2.0/floatingips/{id}        (réassigner port_id)
+#   - GET   /v2.0/ports?device_id={vm_id} (retrouver son propre port)
+#
+# Recommandation : créer un rôle Neutron custom (policy.yaml) limité
+# à ces 3 opérations sur LE SEUL ID de Floating IP utilisé, et un
+# user "openbao-fip-failover" dédié. Cf. RUNBOOK §0.6.
+#
+# NE PAS réutiliser un compte admin/projet OpenStack : la compromission
+# d'un HAProxy donnerait alors accès à tout le projet.
+# ============================================================
+openstack_auth:
+  auth_url: "https://keystone.intra:5000/v3"
+  project_name: "openbao-fip"
+  project_domain_name: "Default"
+  username: "openbao-fip-failover"
+  user_domain_name: "Default"
+  password: "CHANGEME_neutron_account_password"
+  region_name: "RegionOne"
+
+# ID Neutron de la Floating IP à basculer (UUID retourné par
+# `openstack floating ip create <ext-net> -f value -c id`).
+openstack_floating_ip_id: "CHANGEME_uuid_floating_ip"
 
 # Token OpenBao dédié au playbook backup.yml.
 # Créé après init via :

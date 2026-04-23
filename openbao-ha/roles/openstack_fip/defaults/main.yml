@@ -1,0 +1,35 @@
+---
+# ============================================================
+# Defaults pour le rôle openstack_fip (failover Floating IP via Neutron)
+# ============================================================
+
+# Utilisateur système dédié — pas de shell, pas de home.
+fip_system_user: openbao-fip
+fip_system_group: openbao-fip
+
+# Chemins.
+fip_config_dir: /etc/openstack
+fip_clouds_yaml: "{{ fip_config_dir }}/clouds.yaml"
+fip_script_path: /usr/local/sbin/openbao-fip-failover.py
+fip_state_dir: /var/lib/openbao-fip
+
+# Cible HAProxy locale à monitorer (l'API OpenBao via le frontend HAProxy local).
+fip_health_url: "https://127.0.0.1:{{ haproxy_frontend_port | default(8200) }}/v1/sys/health"
+fip_health_ca_path: /etc/haproxy/ca.crt
+
+# Combien de checks consécutifs OK pour considérer le local comme sain.
+fip_health_consecutive_ok: 2
+
+# Combien de checks consécutifs KO pour considérer le local comme down.
+fip_health_consecutive_ko: 3
+
+# Période du timer systemd (secondes).
+fip_timer_period_sec: 10
+
+# Délai max d'appel à l'API Neutron (secondes).
+fip_neutron_timeout_sec: 8
+
+# Politique de bascule :
+#   - "preempt" : le master reprend la FIP dès qu'il redevient sain (par défaut)
+#   - "sticky"  : la FIP reste là où elle est tant que son porteur est sain
+fip_takeover_policy: preempt

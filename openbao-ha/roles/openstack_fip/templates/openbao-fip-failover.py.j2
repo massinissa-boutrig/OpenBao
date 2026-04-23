@@ -1,0 +1,224 @@
+#!/usr/bin/python3
+# {{ ansible_managed }}
+"""
+openbao-fip-failover — bascule de Floating IP OpenStack via API Neutron.
+
+Logique :
+  1. Vérifie la santé locale : HAProxy doit être actif et /v1/sys/health
+     doit répondre 200 ou 429 (standby unsealed).
+  2. Interroge Neutron pour savoir où est la FIP actuellement.
+  3. Décide en fonction de la priorité (master/backup) et de la politique :
+       - master sain + FIP pas chez lui  → reprend la FIP
+       - backup sain + FIP pas chez lui ET master KO → reprend la FIP
+       - local KO + FIP chez lui          → libère (set port_id=None)
+  4. Logge dans journald (stdout/stderr).
+
+Lancé par systemd timer toutes les {{ fip_timer_period_sec }}s. Tourne en
+oneshot, idempotent. Aucun état persistant indispensable côté script —
+on s'appuie uniquement sur l'API Neutron comme source de vérité.
+
+Pour lever la priorité du master sans le redémarrer :
+  systemctl stop haproxy   # le script libèrera la FIP au prochain tick
+
+État de santé persisté dans {{ fip_state_dir }}/health.json (compteurs
+consécutifs OK/KO pour amortir les flaps).
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import socket
+import ssl
+import subprocess
+import sys
+import time
+from pathlib import Path
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+
+import openstack  # type: ignore[import-untyped]
+
+# ---------------------------------------------------------------------------
+# Constantes injectées depuis Ansible
+# ---------------------------------------------------------------------------
+CLOUD_NAME = "openbao_fip"
+HEALTH_URL = "{{ fip_health_url }}"
+HEALTH_CA = "{{ fip_health_ca_path }}"
+NEUTRON_TIMEOUT = {{ fip_neutron_timeout_sec }}
+FIP_ID = "{{ openstack_floating_ip_id }}"
+FIP_ADDR = "{{ openstack_floating_ip }}"
+HOSTNAME = "{{ inventory_hostname }}"
+PRIORITY = "{{ haproxy_priority }}"  # "master" ou "backup"
+TAKEOVER = "{{ fip_takeover_policy }}"  # "preempt" ou "sticky"
+STATE_FILE = Path("{{ fip_state_dir }}/health.json")
+CONSECUTIVE_OK = {{ fip_health_consecutive_ok }}
+CONSECUTIVE_KO = {{ fip_health_consecutive_ko }}
+
+# Le clouds.yaml est lu depuis /etc/openstack — openstacksdk le trouve seul.
+os.environ.setdefault("OS_CLIENT_CONFIG_FILE", "{{ fip_clouds_yaml }}")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stderr,
+)
+log = logging.getLogger("fip-failover")
+
+
+# ---------------------------------------------------------------------------
+# Health check local
+# ---------------------------------------------------------------------------
+def haproxy_active() -> bool:
+    """Retourne True si systemctl is-active haproxy == active."""
+    try:
+        rc = subprocess.run(
+            ["/usr/bin/systemctl", "is-active", "--quiet", "haproxy"],
+            check=False,
+            timeout=5,
+        ).returncode
+        return rc == 0
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        log.warning("systemctl is-active haproxy a échoué: %s", exc)
+        return False
+
+
+def openbao_reachable() -> bool:
+    """Interroge HAProxy local (qui forward vers OpenBao). Accepte 200 et 429."""
+    ctx = ssl.create_default_context(cafile=HEALTH_CA)
+    req = Request(HEALTH_URL, method="GET")
+    try:
+        with urlopen(req, timeout=5, context=ctx) as resp:
+            return resp.status in (200, 429)
+    except HTTPError as exc:
+        return exc.code in (200, 429)
+    except (URLError, socket.timeout, OSError) as exc:
+        log.warning("/v1/sys/health injoignable: %s", exc)
+        return False
+
+
+def local_healthy() -> bool:
+    return haproxy_active() and openbao_reachable()
+
+
+# ---------------------------------------------------------------------------
+# État persistant pour amortir les flaps
+# ---------------------------------------------------------------------------
+def load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {"ok_streak": 0, "ko_streak": 0}
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"ok_streak": 0, "ko_streak": 0}
+
+
+def save_state(state: dict) -> None:
+    try:
+        STATE_FILE.write_text(json.dumps(state))
+    except OSError as exc:
+        log.warning("Impossible d'écrire l'état: %s", exc)
+
+
+def update_streak(state: dict, healthy: bool) -> dict:
+    if healthy:
+        state["ok_streak"] = state.get("ok_streak", 0) + 1
+        state["ko_streak"] = 0
+    else:
+        state["ko_streak"] = state.get("ko_streak", 0) + 1
+        state["ok_streak"] = 0
+    return state
+
+
+# ---------------------------------------------------------------------------
+# OpenStack Neutron
+# ---------------------------------------------------------------------------
+def get_conn():
+    return openstack.connect(cloud=CLOUD_NAME, timeout=NEUTRON_TIMEOUT)
+
+
+def find_my_port(conn) -> str | None:
+    """Retourne l'ID du port Neutron de cette VM (par fixed_ip)."""
+    # On retrouve son IP de management.
+    my_ip = socket.gethostbyname(socket.gethostname())
+    for port in conn.network.ports():
+        for fixed in port.fixed_ips or []:
+            if fixed.get("ip_address") == my_ip:
+                return port.id
+    log.error("Impossible de retrouver le port Neutron pour IP %s", my_ip)
+    return None
+
+
+def get_fip_state(conn):
+    """Retourne (current_port_id_or_None, fip_object)."""
+    fip = conn.network.get_ip(FIP_ID)
+    return fip.port_id, fip
+
+
+def attach_fip(conn, my_port_id: str) -> None:
+    log.info("Reprise de la FIP %s vers le port %s", FIP_ADDR, my_port_id)
+    conn.network.update_ip(FIP_ID, port_id=my_port_id)
+
+
+def release_fip(conn) -> None:
+    log.info("Libération de la FIP %s (local KO)", FIP_ADDR)
+    conn.network.update_ip(FIP_ID, port_id=None)
+
+
+# ---------------------------------------------------------------------------
+# Logique de décision
+# ---------------------------------------------------------------------------
+def decide_and_act() -> int:
+    state = load_state()
+    healthy = local_healthy()
+    state = update_streak(state, healthy)
+    save_state(state)
+
+    is_stable_ok = state["ok_streak"] >= CONSECUTIVE_OK
+    is_stable_ko = state["ko_streak"] >= CONSECUTIVE_KO
+
+    log.info(
+        "[%s/%s] healthy=%s ok_streak=%d ko_streak=%d",
+        HOSTNAME,
+        PRIORITY,
+        healthy,
+        state["ok_streak"],
+        state["ko_streak"],
+    )
+
+    try:
+        conn = get_conn()
+        my_port = find_my_port(conn)
+        if my_port is None:
+            return 2
+
+        current_port, _fip = get_fip_state(conn)
+        fip_is_mine = current_port == my_port
+
+        # Cas 1 : je suis sain et la FIP n'est pas chez moi
+        if is_stable_ok and not fip_is_mine:
+            if PRIORITY == "master":
+                # Master sain reprend toujours s'il a la priorité
+                if TAKEOVER == "preempt" or current_port is None:
+                    attach_fip(conn, my_port)
+            elif PRIORITY == "backup" and current_port is None:
+                # Backup ne reprend que si personne n'a la FIP
+                attach_fip(conn, my_port)
+
+        # Cas 2 : je suis KO et la FIP est chez moi → libérer
+        elif is_stable_ko and fip_is_mine:
+            release_fip(conn)
+
+        # Cas 3 : tout va bien (FIP chez le bon hôte ou je n'ai rien à faire)
+        else:
+            log.debug("Aucune action requise")
+
+    except Exception as exc:  # noqa: BLE001
+        log.error("Erreur Neutron: %s", exc)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(decide_and_act())

@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run OpenBao Floating IP failover check periodically
+Documentation=file:///usr/local/sbin/openbao-fip-failover.py
+Requires=openbao-fip-failover.service
+
+[Timer]
+# Premier tick rapide après le boot pour reprendre la FIP au plus vite
+OnBootSec=15s
+# Puis tous les {{ fip_timer_period_sec }}s relatifs au démarrage de l'unité
+OnUnitActiveSec={{ fip_timer_period_sec }}s
+# Petit jitter pour éviter que les 2 HAProxy tapent Neutron en même temps
+RandomizedDelaySec=2s
+AccuracySec=1s
+Unit=openbao-fip-failover.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,51 @@
+# {{ ansible_managed }}
+[Unit]
+Description=OpenBao Floating IP failover (Neutron)
+Documentation=file:///usr/local/sbin/openbao-fip-failover.py
+After=network-online.target haproxy.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ fip_system_user }}
+Group={{ fip_system_group }}
+ExecStart={{ fip_script_path }}
+TimeoutStartSec=30s
+
+# Hardening systemd
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount
+
+# Lecture stricte de /etc/openstack et écriture dans le state dir
+ReadOnlyPaths=/etc/openstack
+ReadWritePaths={{ fip_state_dir }}
+
+# Pas de capabilities, pas de réseau privilégié — le script ne fait que HTTPS sortant
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# IP egress : Keystone + Neutron + HAProxy local
+IPAddressDeny=any
+IPAddressAllow=localhost
+IPAddressAllow={{ openstack_fip_egress_cidr | default('0.0.0.0/0') }}
+
+[Install]
+WantedBy=multi-user.target

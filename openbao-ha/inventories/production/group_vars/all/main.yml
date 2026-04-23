@@ -53,8 +53,8 @@ openbao_tls_cipher_suites:
   - "TLS_CHACHA20_POLY1305_SHA256"
   - "TLS_AES_128_GCM_SHA256"
 
-# --- VIP / DNS HAProxy ---
-# FQDN de la VIP frontale (VIP keepalived unique, mono-DC OpenStack).
+# --- Floating IP / DNS HAProxy ---
+# FQDN pointant vers la Floating IP OpenStack frontale (bascule via API Neutron).
 openbao_vip_fqdn: "vip-bao.{{ internal_domain }}"
 
 # --- HAProxy : sources autorisées pour les stats (supervision) ---

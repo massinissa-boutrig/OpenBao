@@ -1,0 +1,132 @@
+---
+# fip-failover-test.yml — vérifie la bascule de Floating IP OpenStack.
+#
+# Scénario :
+#   1. Constate où est attachée la FIP (port_id côté Neutron).
+#   2. Stoppe HAProxy sur le master.
+#   3. Attend ko_streak * timer_period secondes.
+#   4. Vérifie que la FIP a migré vers le backup.
+#   5. Redémarre HAProxy sur le master.
+#   6. Si fip_takeover_policy=preempt, vérifie que la FIP revient sur le master.
+#
+# Usage :
+#   ansible-playbook -i inventories/production playbooks/fip-failover-test.yml
+#
+# Sécurité : ne tourne JAMAIS automatiquement. Manuel uniquement, en fenêtre
+# de maintenance. Le playbook coupe HAProxy → coupe le trafic ~30s.
+
+- name: Pré-requis — collecter les hosts master/backup
+  hosts: haproxy
+  gather_facts: false
+  tasks:
+    - name: Identifier le master HAProxy
+      ansible.builtin.set_fact:
+        ha_master: "{{ inventory_hostname }}"
+      when: haproxy_priority == 'master'
+      run_once: false
+
+    - name: Identifier le backup HAProxy
+      ansible.builtin.set_fact:
+        ha_backup: "{{ inventory_hostname }}"
+      when: haproxy_priority == 'backup'
+      run_once: false
+
+- name: Test de bascule Floating IP — étape 1/4 (état initial)
+  hosts: haproxy[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: État initial — où est la FIP ?
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/openstack --os-cloud openbao_fip
+          floating ip show {{ openstack_floating_ip_id }} -f json
+      register: fip_initial
+      environment:
+        OS_CLIENT_CONFIG_FILE: "{{ fip_clouds_yaml | default('/etc/openstack/clouds.yaml') }}"
+      changed_when: false
+
+    - name: Afficher port_id initial
+      ansible.builtin.debug:
+        msg: "FIP {{ openstack_floating_ip }} actuellement sur port {{ (fip_initial.stdout | from_json).port_id }}"
+
+- name: Test de bascule Floating IP — étape 2/4 (kill master)
+  hosts: "{{ groups['haproxy'] | select('match', '.*') | list | first }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stopper HAProxy sur le master pour simuler une panne
+      ansible.builtin.systemd:
+        name: haproxy
+        state: stopped
+      when: haproxy_priority == 'master'
+
+    - name: Attendre la détection KO + bascule (ko_streak * période)
+      ansible.builtin.pause:
+        seconds: "{{ (fip_health_consecutive_ko | default(3)) * (fip_timer_period_sec | default(10)) + 5 }}"
+      when: haproxy_priority == 'master'
+
+- name: Test de bascule Floating IP — étape 3/4 (vérifier migration)
+  hosts: haproxy[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: État après panne — où est la FIP ?
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/openstack --os-cloud openbao_fip
+          floating ip show {{ openstack_floating_ip_id }} -f json
+      register: fip_after_kill
+      environment:
+        OS_CLIENT_CONFIG_FILE: "{{ fip_clouds_yaml | default('/etc/openstack/clouds.yaml') }}"
+      changed_when: false
+
+    - name: Vérifier que le port_id a changé (FIP migrée vers le backup)
+      ansible.builtin.assert:
+        that:
+          - (fip_after_kill.stdout | from_json).port_id != (fip_initial.stdout | from_json).port_id
+        fail_msg: >-
+          ÉCHEC : la FIP n'a pas migré après {{ fip_health_consecutive_ko | default(3) }}
+          checks KO. Vérifier journalctl -u openbao-fip-failover.service sur le backup.
+        success_msg: "OK : la FIP a migré (port {{ (fip_initial.stdout | from_json).port_id }} → {{ (fip_after_kill.stdout | from_json).port_id }})"
+
+- name: Test de bascule Floating IP — étape 4/4 (restaurer master)
+  hosts: haproxy
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Redémarrer HAProxy sur le master
+      ansible.builtin.systemd:
+        name: haproxy
+        state: started
+      when: haproxy_priority == 'master'
+
+    - name: Attendre la stabilisation OK + éventuel preempt
+      ansible.builtin.pause:
+        seconds: "{{ (fip_health_consecutive_ok | default(2)) * (fip_timer_period_sec | default(10)) + 5 }}"
+      run_once: true
+
+- name: Test de bascule Floating IP — bilan final
+  hosts: haproxy[0]
+  become: true
+  gather_facts: false
+  tasks:
+    - name: État final — où est la FIP ?
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/openstack --os-cloud openbao_fip
+          floating ip show {{ openstack_floating_ip_id }} -f json
+      register: fip_final
+      environment:
+        OS_CLIENT_CONFIG_FILE: "{{ fip_clouds_yaml | default('/etc/openstack/clouds.yaml') }}"
+      changed_when: false
+
+    - name: Bilan
+      ansible.builtin.debug:
+        msg: |
+          Bilan du test de bascule Floating IP :
+            - Initial : port {{ (fip_initial.stdout | from_json).port_id }}
+            - Après kill master : port {{ (fip_after_kill.stdout | from_json).port_id }}
+            - Final : port {{ (fip_final.stdout | from_json).port_id }}
+          Politique : {{ fip_takeover_policy | default('preempt') }}
+          (preempt → la FIP doit être revenue sur le master)

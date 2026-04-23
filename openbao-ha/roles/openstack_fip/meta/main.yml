@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: openstack_fip
+  namespace: acme
+  author: Acme Corp Platform Engineering
+  description: Failover de Floating IP OpenStack via API Neutron pour HAProxy frontaux OpenBao.
+  company: Acme Corp
+  license: Apache-2.0
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - trixie
+  galaxy_tags:
+    - openstack
+    - neutron
+    - floating-ip
+    - failover
+    - ha
+
+dependencies: []
