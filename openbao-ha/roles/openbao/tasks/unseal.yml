@@ -22,14 +22,18 @@
       openbao_auto_unseal_enabled=true mais openbao_unseal_keys n'est pas défini
       ou contient moins de {{ openbao_unseal_keys_count }} clés.
       Renseigner inventories/production/group_vars/all/vault.yml.
-  when: openbao_auto_unseal_enabled | bool
+  when: >-
+    (openbao_auto_unseal_enabled | default(false) | bool)
+    or (openbao_init_just_done | default(false) | bool)
 
 - name: Auto-unseal — attendre que le listener TCP réponde
   ansible.builtin.wait_for:
     host: 127.0.0.1
     port: "{{ openbao_api_port }}"
     timeout: "{{ openbao_unseal_listener_timeout }}"
-  when: openbao_auto_unseal_enabled | bool
+  when: >-
+    (openbao_auto_unseal_enabled | default(false) | bool)
+    or (openbao_init_just_done | default(false) | bool)
 
 - name: Auto-unseal — interroger l'état seal/init via l'API
   ansible.builtin.uri:
@@ -42,7 +46,9 @@
   register: openbao_seal_status
   changed_when: false
   check_mode: false
-  when: openbao_auto_unseal_enabled | bool
+  when: >-
+    (openbao_auto_unseal_enabled | default(false) | bool)
+    or (openbao_init_just_done | default(false) | bool)
 
 - name: Auto-unseal — short-circuit si non initialisé (init manuel obligatoire)
   ansible.builtin.debug:
@@ -51,14 +57,14 @@
       (sys/seal-status.initialized=false). L'init est une procédure manuelle —
       voir RUNBOOK §1. Auto-unseal ignoré.
   when:
-    - openbao_auto_unseal_enabled | bool
+    - (openbao_auto_unseal_enabled | default(false) | bool) or (openbao_init_just_done | default(false) | bool)
     - not (openbao_seal_status.json.initialized | default(false))
 
 - name: Auto-unseal — short-circuit si déjà unsealed
   ansible.builtin.debug:
     msg: "Le nœud {{ inventory_hostname }} est déjà unsealed, rien à faire."
   when:
-    - openbao_auto_unseal_enabled | bool
+    - (openbao_auto_unseal_enabled | default(false) | bool) or (openbao_init_just_done | default(false) | bool)
     - openbao_seal_status.json.initialized | default(false)
     - not (openbao_seal_status.json.sealed | default(true))
 
@@ -79,7 +85,7 @@
   no_log: true
   check_mode: false
   when:
-    - openbao_auto_unseal_enabled | bool
+    - (openbao_auto_unseal_enabled | default(false) | bool) or (openbao_init_just_done | default(false) | bool)
     - openbao_seal_status.json.initialized | default(false)
     - openbao_seal_status.json.sealed | default(true)
 
@@ -97,6 +103,6 @@
   failed_when:
     - openbao_seal_status_after.json.sealed | default(true)
   when:
-    - openbao_auto_unseal_enabled | bool
+    - (openbao_auto_unseal_enabled | default(false) | bool) or (openbao_init_just_done | default(false) | bool)
     - openbao_seal_status.json.initialized | default(false)
     - openbao_seal_status.json.sealed | default(true)

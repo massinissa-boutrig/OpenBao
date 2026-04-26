@@ -39,3 +39,35 @@ openbao_limit_core: 0
 # Soft-fail : afficher l'erreur de `bao operator diagnose` sans casser le play
 # (utile au tout premier déploiement avant init).
 openbao_diagnose_soft_fail: true
+
+# ============================================================
+# Auto-init du cluster (zéro intervention humaine à l'install)
+# ============================================================
+# Activer pour qu'Ansible exécute lui-même `sys/init` la première fois
+# (POST /v1/sys/init avec Shamir 5/3 par défaut), persiste les keys + le
+# root token chiffrés dans openbao_init_vault_path côté contrôleur, puis
+# unseal automatiquement les 3 nœuds. Idempotent : si le cluster est
+# déjà initialisé, la tâche est skip silencieusement.
+openbao_auto_init_enabled: false
+
+# Nœud bootstrap : celui qui reçoit POST /v1/sys/init.
+# Doit être un membre du groupe `openbao`.
+openbao_init_bootstrap_host: bao-node-1
+
+# Schéma Shamir.
+openbao_init_key_shares: 5
+openbao_init_key_threshold: 3
+
+# Délai max d'attente du listener TCP avant init (secondes).
+openbao_init_listener_timeout: 60
+
+# Chemin local (côté contrôleur) du fichier Ansible Vault qui recevra
+# les unseal_keys + root_token. Doit être en dehors de tout dépôt git
+# en plain (le fichier est chiffré, mais autant éviter le risque).
+# Par défaut : à côté du vault.yml existant pour cohérence.
+openbao_init_vault_path: "{{ inventory_dir }}/group_vars/all/init.vault.yml"
+
+# Fichier contenant la passphrase ansible-vault (le même que pour le
+# reste du projet). Renseigner dans ansible.cfg (vault_password_file)
+# ou le surcharger ici.
+openbao_init_vault_password_file: "{{ lookup('env', 'ANSIBLE_VAULT_PASSWORD_FILE') | default('~/.ansible/vault_pass', true) }}"

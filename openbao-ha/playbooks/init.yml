@@ -1,0 +1,48 @@
+---
+# ============================================================
+# Auto-init du cluster OpenBao — playbook autonome.
+# ============================================================
+#
+# Usage :
+#   # En complément d'un site.yml déjà passé (cluster déployé mais non init) :
+#   ansible-playbook playbooks/init.yml --ask-vault-pass
+#
+#   # Ou en activant l'option globalement et en relançant site.yml :
+#   ansible-playbook playbooks/site.yml \
+#     -e openbao_auto_init_enabled=true --ask-vault-pass
+#
+# Ce que fait ce playbook :
+#   1. Bootstrap (sys/init) sur openbao_init_bootstrap_host (ex: bao-node-1).
+#   2. Persiste les 5 unseal_keys + le root_token chiffrés dans
+#      inventories/production/group_vars/all/init.vault.yml.
+#   3. Unseal les 3 nœuds dans la foulée → cluster opérationnel à la fin.
+#
+# Idempotence :
+#   - Si le cluster est déjà initialisé → init est skip silencieusement.
+#   - Si init.vault.yml existe déjà mais cluster non init → fail (refus
+#     d'écraser, on demande une intervention manuelle pour archiver).
+#
+# Sécurité :
+#   - openbao_auto_init_enabled est forcé à true uniquement le temps
+#     de ce play, sans modifier les defaults persistants.
+#   - Aucune key/token n'apparaît dans la sortie Ansible (no_log).
+#   - À sauvegarder hors-ligne immédiatement après le run, puis
+#     révoquer le root token au profit d'AppRoles ciblées.
+# ============================================================
+- name: Initialiser et unseal le cluster OpenBao (zéro intervention humaine)
+  hosts: openbao
+  become: true
+  gather_facts: true
+  serial: 1   # bootstrap d'abord, puis unseal des autres dans l'ordre
+  vars:
+    openbao_auto_init_enabled: true
+  tasks:
+    - name: Importer la tâche d'init du rôle openbao
+      ansible.builtin.import_role:
+        name: openbao
+        tasks_from: init.yml
+
+    - name: Importer la tâche d'unseal du rôle openbao
+      ansible.builtin.import_role:
+        name: openbao
+        tasks_from: unseal.yml

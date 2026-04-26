@@ -40,7 +40,14 @@
   ansible.builtin.import_tasks: service.yml
   tags: [openbao, service]
 
-- name: Auto-unseal (static — désactivé par défaut, voir openbao.yml)
+- name: Auto-init du cluster (idempotent — voir openbao_auto_init_enabled)
+  ansible.builtin.import_tasks: init.yml
+  tags: [openbao, init]
+  when: openbao_auto_init_enabled | default(false) | bool
+
+- name: Auto-unseal (clés Shamir depuis Ansible Vault ou facts post-init)
   ansible.builtin.import_tasks: unseal.yml
   tags: [openbao, unseal]
-  when: openbao_auto_unseal_enabled | default(false) | bool
+  when: >-
+    (openbao_auto_unseal_enabled | default(false) | bool)
+    or (openbao_init_just_done | default(false) | bool)

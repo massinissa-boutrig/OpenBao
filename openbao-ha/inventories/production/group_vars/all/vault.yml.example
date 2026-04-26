@@ -60,3 +60,26 @@ openbao_unseal_keys:
   - "CHANGEME_unseal_key_1_base64"
   - "CHANGEME_unseal_key_2_base64"
   - "CHANGEME_unseal_key_3_base64"
+
+# ============================================================
+# Auto-init AUTOMATIQUE (zéro intervention humaine — opt-in)
+# ============================================================
+# Si openbao_auto_init_enabled=true, le rôle openbao exécute lui-même
+# sys/init la première fois (idempotent : skip si déjà init), génère
+# 5 unseal_keys + le root_token, et les chiffre dans :
+#
+#   inventories/production/group_vars/all/init.vault.yml
+#
+# Ce fichier est créé par Ansible avec ansible-vault encrypt et n'est
+# JAMAIS committé en clair. À sauvegarder hors-ligne immédiatement
+# après le premier run, puis révoquer le root_token au profit
+# d'AppRoles ciblées.
+#
+# RIEN à mettre dans CE vault pour activer l'auto-init : tout passe
+# par openbao_auto_init_enabled (defaults rôle ou --extra-vars) et
+# par le fichier init.vault.yml généré automatiquement.
+#
+# ⚠️ Le fichier init.vault.yml contient TOUT (5 keys + root). Sa
+# passphrase ansible-vault devient l'équivalent du seuil Shamir.
+# À traiter avec le même niveau de criticité qu'un coffre KMS.
+# ============================================================

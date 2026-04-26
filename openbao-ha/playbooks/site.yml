@@ -1,11 +1,19 @@
 ---
 # ============================================================
 # Orchestration complète : déploie OpenBao + HAProxy + keepalived
+#
+# Init et unseal automatiques :
+#   Si openbao_auto_init_enabled=true (defaults rôle openbao ou
+#   --extra-vars), le rôle openbao exécute lui-même sys/init sur
+#   openbao_init_bootstrap_host et unseal les 3 nœuds dans la foulée.
+#   Idempotent : skip silencieux si le cluster est déjà init.
+#   Sinon, init reste manuel — voir RUNBOOK §1 ou playbooks/init.yml.
 # ============================================================
-- name: Déployer les nœuds OpenBao
+- name: Déployer les nœuds OpenBao (et init/unseal si activé)
   hosts: openbao
   become: true
   gather_facts: true
+  serial: "{{ '1' if (openbao_auto_init_enabled | default(false) | bool) else '100%' }}"
   roles:
     - openbao
 

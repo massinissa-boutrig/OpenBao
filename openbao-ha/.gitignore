@@ -1,0 +1,31 @@
+# ============================================================
+# Secrets et fichiers générés — JAMAIS dans git en clair
+# ============================================================
+
+# Vaults Ansible (le vault.yml peut être committé chiffré, mais on évite
+# tout risque de mauvaise manip avec un .tmp en clair).
+inventories/**/group_vars/**/vault.yml.tmp
+inventories/**/group_vars/**/init.vault.yml.tmp
+
+# PKI générée localement par playbooks/pki.yml
+pki/private/
+pki/csr/
+*.key
+*.pem.key
+
+# Snapshots Raft locaux
+*.snap
+*.snapshot
+
+# Artefacts Ansible
+*.retry
+.ansible/
+roles/galaxy/
+
+# Editeurs / OS
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

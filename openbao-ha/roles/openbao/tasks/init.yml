@@ -1,0 +1,170 @@
+---
+# ============================================================
+# Auto-init du cluster OpenBao — idempotent et zéro intervention.
+# ============================================================
+# Cette tâche est exécutée UNIQUEMENT sur le nœud bao-node-1
+# (élu via openbao_init_bootstrap_host). Elle :
+#
+#   1. Vérifie l'état d'init du cluster via /v1/sys/init.
+#   2. Si déjà initialisé → skip silencieux (idempotent).
+#   3. Sinon → POST /v1/sys/init avec key_shares + key_threshold.
+#   4. Récupère les unseal_keys_b64 + root_token.
+#   5. Persiste le résultat chiffré dans un fichier Ansible Vault
+#      côté contrôleur (delegate_to: localhost).
+#   6. Met à jour les facts en mémoire pour que la tâche d'unseal
+#      qui suit puisse utiliser les clés sans relire le vault.
+#
+# Toutes les étapes sont protégées par no_log: true et check_mode: false.
+# La cérémonie 5-opérateurs n'est plus nécessaire en sortie d'install :
+# le playbook produit un cluster opérationnel et unsealed.
+#
+# ⚠️ Le fichier généré (init.vault.yml) contient TOUS les secrets
+# critiques. Sa passphrase Ansible Vault devient l'équivalent du
+# seuil Shamir. À sauvegarder hors-ligne immédiatement après l'install,
+# puis à révoquer le root_token au profit d'AppRoles ciblées.
+# ============================================================
+
+- name: Init — n'agir que sur le nœud bootstrap
+  ansible.builtin.meta: end_host
+  when: inventory_hostname != openbao_init_bootstrap_host
+
+- name: Init — attendre que le listener TCP réponde
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ openbao_api_port }}"
+    timeout: "{{ openbao_init_listener_timeout }}"
+
+- name: Init — interroger /v1/sys/init
+  ansible.builtin.uri:
+    url: "https://127.0.0.1:{{ openbao_api_port }}/v1/sys/init"
+    method: GET
+    return_content: true
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: 200
+  register: openbao_init_status
+  changed_when: false
+  check_mode: false
+
+- name: Init — short-circuit si déjà initialisé (idempotent)
+  ansible.builtin.debug:
+    msg: >-
+      Cluster déjà initialisé (sys/init.initialized=true).
+      Aucune action. Pour ré-initialiser (= perte totale des données),
+      voir RUNBOOK §1.6.
+  when: openbao_init_status.json.initialized | bool
+
+- name: Init — exécuter sys/init UNIQUEMENT si non initialisé
+  when: not (openbao_init_status.json.initialized | bool)
+  block:
+
+    - name: Init — POST /v1/sys/init (génère keys + root token)
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:{{ openbao_api_port }}/v1/sys/init"
+        method: POST
+        body_format: json
+        body:
+          secret_shares: "{{ openbao_init_key_shares }}"
+          secret_threshold: "{{ openbao_init_key_threshold }}"
+        return_content: true
+        validate_certs: true
+        ca_path: "{{ openbao_tls_dir }}/ca.crt"
+        status_code: 200
+      register: openbao_init_result
+      no_log: true
+      check_mode: false
+
+    - name: Init — préparer le payload chiffré côté contrôleur
+      ansible.builtin.set_fact:
+        openbao_init_payload:
+          openbao_unseal_keys: "{{ openbao_init_result.json.keys_base64 }}"
+          openbao_root_token: "{{ openbao_init_result.json.root_token }}"
+          openbao_init_timestamp: "{{ ansible_date_time.iso8601 | default(lookup('pipe', 'date -Iseconds')) }}"
+          openbao_init_cluster_name: "{{ openbao_cluster_name }}"
+          openbao_init_bootstrap_host: "{{ openbao_init_bootstrap_host }}"
+      no_log: true
+
+    - name: Init — créer le répertoire local pour le vault d'init si besoin
+      ansible.builtin.file:
+        path: "{{ openbao_init_vault_path | dirname }}"
+        state: directory
+        mode: "0700"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Init — refuser d'écraser un vault d'init existant
+      ansible.builtin.stat:
+        path: "{{ openbao_init_vault_path }}"
+      register: openbao_init_vault_stat
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Init — sécurité, abandonner si init.vault.yml existe déjà
+      ansible.builtin.fail:
+        msg: >-
+          Le fichier {{ openbao_init_vault_path }} existe déjà mais le cluster
+          n'est PAS initialisé. Refus d'écraser pour éviter la perte des
+          anciennes clés. Vérifier manuellement, archiver l'ancien fichier,
+          puis relancer.
+      when: openbao_init_vault_stat.stat.exists
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Init — écrire le payload en clair temporaire (umask 077)
+      ansible.builtin.copy:
+        content: "{{ openbao_init_payload | to_nice_yaml(indent=2) }}"
+        dest: "{{ openbao_init_vault_path }}.tmp"
+        mode: "0600"
+      delegate_to: localhost
+      become: false
+      no_log: true
+      run_once: true
+
+    - name: Init — chiffrer avec ansible-vault et déplacer en place
+      ansible.builtin.command:
+        cmd: >-
+          ansible-vault encrypt
+          --vault-password-file {{ openbao_init_vault_password_file }}
+          --output {{ openbao_init_vault_path }}
+          {{ openbao_init_vault_path }}.tmp
+      delegate_to: localhost
+      become: false
+      run_once: true
+      no_log: true
+      changed_when: true
+
+    - name: Init — supprimer le fichier en clair temporaire
+      ansible.builtin.file:
+        path: "{{ openbao_init_vault_path }}.tmp"
+        state: absent
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Init — exposer les clés en facts pour l'unseal de la même run
+      ansible.builtin.set_fact:
+        openbao_unseal_keys: "{{ openbao_init_result.json.keys_base64 }}"
+        openbao_root_token: "{{ openbao_init_result.json.root_token }}"
+        openbao_init_just_done: true
+      no_log: true
+
+    - name: Init — propager les clés à TOUS les nœuds openbao pour l'unseal
+      ansible.builtin.set_fact:
+        openbao_unseal_keys: "{{ hostvars[openbao_init_bootstrap_host]['openbao_unseal_keys'] }}"
+        openbao_init_just_done: true
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['openbao'] }}"
+      no_log: true
+
+    - name: Init — afficher le résumé (sans secrets) et le chemin du vault
+      ansible.builtin.debug:
+        msg:
+          - "✅ Cluster {{ openbao_cluster_name }} initialisé."
+          - "🔑 5 unseal keys + root token chiffrés dans :"
+          - "   {{ openbao_init_vault_path }}"
+          - "📌 Sauvegarder ce fichier hors-ligne immédiatement."
+          - "📌 Révoquer le root token dès qu'une AppRole admin est en place."
