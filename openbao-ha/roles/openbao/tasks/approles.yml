@@ -1,0 +1,72 @@
+---
+# ============================================================
+# Gestion déclarative des AppRoles.
+# ============================================================
+# Pour chaque AppRole de openbao_approles :
+#   1. PUT /v1/auth/approle/role/<name> avec policies + TTLs.
+#   2. GET /v1/auth/approle/role/<name>/role-id pour le récupérer.
+#
+# Note importante :
+#   On NE génère PAS de secret_id ici. La distribution des secret_id
+#   se fait via un playbook séparé (playbooks/approle-secret-id.yml,
+#   à créer plus tard) qui utilise le response wrapping et délivre
+#   un wrap_token one-shot au consommateur (CI/CD, app), évitant
+#   ainsi tout transit du secret_id par Ansible.
+#
+# Les role_id récupérés sont stockés en facts (pas persistés) pour
+# qu'ils puissent être consommés par d'autres tâches dans la même run.
+# ============================================================
+
+- name: AppRoles — créer/mettre à jour
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/auth/approle/role/{{ item.name }}"
+    method: POST
+    body_format: json
+    body:
+      token_policies: "{{ item.policies | join(',') }}"
+      token_ttl: "{{ item.token_ttl | default('1h') }}"
+      token_max_ttl: "{{ item.token_max_ttl | default('4h') }}"
+      secret_id_ttl: "{{ item.secret_id_ttl | default('24h') }}"
+      bind_secret_id: "{{ item.bind_secret_id | default(true) }}"
+      secret_id_num_uses: "{{ item.secret_id_num_uses | default(0) }}"
+      token_num_uses: "{{ item.token_num_uses | default(0) }}"
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 204]
+  loop: "{{ openbao_approles }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  check_mode: false
+  changed_when: true
+
+- name: AppRoles — récupérer les role_id (pour usage downstream)
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/auth/approle/role/{{ item.name }}/role-id"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: 200
+    return_content: true
+  register: _openbao_approle_role_ids
+  loop: "{{ openbao_approles }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  check_mode: false
+  changed_when: false
+
+- name: AppRoles — résumé non-sensible (sans role_id)
+  ansible.builtin.debug:
+    msg: >-
+      AppRole {{ item.item.name }} configuré
+      (policies={{ item.item.policies | join(',') }},
+      ttl={{ item.item.token_ttl | default('1h') }}).
+      Pour récupérer son secret_id : utiliser playbooks/approle-secret-id.yml.
+  loop: "{{ _openbao_approle_role_ids.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"

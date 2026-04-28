@@ -1,0 +1,72 @@
+---
+# ============================================================
+# Activation des méthodes d'authentification (userpass, approle).
+# ============================================================
+# Idempotence :
+#   1. GET /v1/sys/auth pour connaître l'existant.
+#   2. Si la méthode est absente : POST /v1/sys/auth/<path> (enable).
+#   3. Si la méthode est présente : POST /v1/sys/auth/<path>/tune
+#      pour aligner la config (TTLs, description).
+#
+# OpenBao ne permet pas de changer le `type` d'un mount existant — si on
+# change le type côté inventaire, on doit disable+enable manuellement.
+# ============================================================
+
+- name: Auth methods — récupérer l'état actuel
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/sys/auth"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: 200
+    return_content: true
+  register: _openbao_auth_state
+  no_log: true
+  check_mode: false
+  changed_when: false
+
+- name: Auth methods — activer les méthodes manquantes
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/sys/auth/{{ item.path }}"
+    method: POST
+    body_format: json
+    body:
+      type: "{{ item.type }}"
+      description: "{{ item.description | default('') }}"
+      config: "{{ item.config | default({}) }}"
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 204]
+  loop: "{{ openbao_auth_methods }}"
+  loop_control:
+    label: "{{ item.path }} ({{ item.type }})"
+  when: (item.path + '/') not in (_openbao_auth_state.json | default({}))
+  no_log: true
+  check_mode: false
+  changed_when: true
+
+- name: Auth methods — tuner les méthodes existantes (TTLs, description)
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/sys/auth/{{ item.path }}/tune"
+    method: POST
+    body_format: json
+    body:
+      description: "{{ item.description | default('') }}"
+      default_lease_ttl: "{{ (item.config | default({})).default_lease_ttl | default('0') }}"
+      max_lease_ttl: "{{ (item.config | default({})).max_lease_ttl | default('0') }}"
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 204]
+  loop: "{{ openbao_auth_methods }}"
+  loop_control:
+    label: "{{ item.path }}"
+  when: (item.path + '/') in (_openbao_auth_state.json | default({}))
+  no_log: true
+  check_mode: false
+  changed_when: true

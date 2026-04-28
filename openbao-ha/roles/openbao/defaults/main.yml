@@ -71,3 +71,48 @@ openbao_init_vault_path: "{{ inventory_dir }}/group_vars/all/init.vault.yml"
 # reste du projet). Renseigner dans ansible.cfg (vault_password_file)
 # ou le surcharger ici.
 openbao_init_vault_password_file: "{{ lookup('env', 'ANSIBLE_VAULT_PASSWORD_FILE') | default('~/.ansible/vault_pass', true) }}"
+
+# ============================================================
+# Configure (déclaratif) — auth methods + secret engines + policies
+# ============================================================
+# Activer pour qu'Ansible configure lui-même userpass + AppRole + KV v2
+# + policies (admin, auditor, secrets-rw/ro par projet) + utilisateurs.
+# Dépend de openbao_root_token (lu depuis init.vault.yml ou vault.yml).
+# Idempotent : skip silencieux si tout est déjà aligné.
+openbao_auto_configure_enabled: false
+
+# URL de l'API utilisée pour les appels de configuration (depuis le
+# nœud bootstrap, en local — TLS validé via openbao_tls_dir/ca.crt).
+openbao_api_url: "https://127.0.0.1:{{ openbao_api_port | default(8200) }}"
+
+# Méthodes d'authentification à activer (path = mount path).
+# Le 'type' ne peut PAS changer après création : pour migrer un type,
+# disable+enable manuellement avant de relancer le rôle.
+openbao_auth_methods:
+  - type: userpass
+    path: userpass
+    description: "Authentification utilisateurs humains (avec MFA)"
+    config:
+      default_lease_ttl: "1h"
+      max_lease_ttl: "8h"
+  - type: approle
+    path: approle
+    description: "Authentification machines (CI/CD, workloads)"
+    config:
+      default_lease_ttl: "1h"
+      max_lease_ttl: "24h"
+
+# Liste des projets — un mount KV v2 + 2 policies (rw, ro) par projet.
+# Surchargé dans group_vars/all/main.yml selon les projets réels.
+openbao_projects: []
+
+# Utilisateurs userpass à créer/maintenir (déclaratif).
+# Le mot de passe est lu depuis vault.yml via la variable nommée
+# dans password_var (pour ne pas mélanger liste publique et secret).
+openbao_userpass_users: []
+
+# AppRoles à créer/maintenir (déclaratif).
+# Note : la génération de secret_id n'est PAS faite ici — voir
+# playbooks/approle-secret-id.yml (à créer plus tard) qui utilise
+# le response wrapping pour distribution one-shot sécurisée.
+openbao_approles: []

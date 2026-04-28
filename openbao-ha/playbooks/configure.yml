@@ -1,0 +1,48 @@
+---
+# ============================================================
+# Configure : auth methods + secret engines + policies + identités
+# ============================================================
+#
+# Usage :
+#   # Une fois le cluster init+unsealed (via site.yml ou init.yml) :
+#   ansible-playbook playbooks/configure.yml --ask-vault-pass
+#
+#   # Ou en activant l'option globalement et en relançant site.yml :
+#   ansible-playbook playbooks/site.yml \
+#     -e openbao_auto_configure_enabled=true --ask-vault-pass
+#
+# Ce que fait ce playbook :
+#   1. Active userpass + AppRole (méthodes d'authentification).
+#   2. Crée un mount KV v2 par projet (kv-<projet>/).
+#   3. Déploie les policies admin, auditor, secrets-rw/ro par projet.
+#   4. Crée/met à jour les utilisateurs userpass (mots de passe vault).
+#   5. Crée/met à jour les AppRoles (sans générer les secret_id).
+#
+# Pré-requis :
+#   - Cluster initialisé et unsealed.
+#   - openbao_root_token disponible (lu depuis init.vault.yml généré
+#     par tasks/init.yml, ou fourni via vault.yml).
+#   - openbao_projects, openbao_userpass_users, openbao_approles
+#     renseignés dans group_vars/all/main.yml.
+#   - Mots de passe userpass dans vault.yml (chiffré).
+#
+# Idempotence : tout est en upsert ou GET-then-PUT. Sûr à rejouer.
+# ============================================================
+- name: Configurer OpenBao (auth + secrets + policies + identités)
+  hosts: openbao
+  become: true
+  gather_facts: true
+  vars:
+    openbao_auto_configure_enabled: true
+  vars_files:
+    # Lecture des keys + root_token générés par tasks/init.yml.
+    # Si l'auto-init n'a pas été utilisé, fournir openbao_root_token
+    # via vault.yml ou --extra-vars (et ce vars_files devient inutile).
+    - "{{ inventory_dir }}/group_vars/all/init.vault.yml"
+  tasks:
+    - name: Importer la tâche configure du rôle openbao
+      ansible.builtin.import_role:
+        name: openbao
+        tasks_from: configure.yml
+      delegate_to: "{{ openbao_init_bootstrap_host }}"
+      run_once: true

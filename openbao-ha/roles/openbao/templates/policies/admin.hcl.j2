@@ -1,0 +1,22 @@
+# {{ ansible_managed }}
+# Policy "admin" — accès complet à OpenBao, sauf opérations destructives critiques.
+# Pour les opérateurs habilités (équipe sécurité).
+
+# Accès large à toutes les opérations
+path "*" {
+  capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+}
+
+# Déni explicite des opérations critiques root
+path "sys/seal" {
+  capabilities = ["deny"]
+}
+path "sys/step-down" {
+  capabilities = ["deny"]
+}
+path "sys/storage/raft/snapshot-force" {
+  capabilities = ["deny"]
+}
+path "sys/init" {
+  capabilities = ["deny"]
+}

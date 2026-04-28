@@ -1,0 +1,48 @@
+# {{ ansible_managed }}
+# Policy "auditor" — lecture seule pour audit / supervision / contrôle interne.
+# Donne une vue de la conformité sans aucune capacité de modification ni d'accès aux secrets.
+
+# Santé / état du cluster
+path "sys/health" {
+  capabilities = ["read"]
+}
+path "sys/seal-status" {
+  capabilities = ["read"]
+}
+path "sys/leader" {
+  capabilities = ["read"]
+}
+
+# Configuration des audit devices
+path "sys/audit" {
+  capabilities = ["read", "list"]
+}
+
+# Lecture seule des policies et de leur contenu
+path "sys/policies/acl" {
+  capabilities = ["read", "list"]
+}
+path "sys/policies/acl/*" {
+  capabilities = ["read"]
+}
+
+# Lecture des mounts (auth + secret engines) sans accès au contenu
+path "sys/mounts" {
+  capabilities = ["read", "list"]
+}
+path "sys/auth" {
+  capabilities = ["read", "list"]
+}
+
+# Métriques Prometheus (utiles pour la supervision conformité)
+path "sys/metrics" {
+  capabilities = ["read"]
+}
+
+# Pas d'accès aux données ni aux logins — déni explicite des paths sensibles
+path "kv-*/data/*" {
+  capabilities = ["deny"]
+}
+path "auth/*/login" {
+  capabilities = ["deny"]
+}

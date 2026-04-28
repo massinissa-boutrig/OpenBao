@@ -64,3 +64,42 @@ haproxy_stats_allowed_sources:
 # --- Backup ---
 openbao_backup_dir: /var/backups/openbao
 openbao_backup_retention_days: 30
+
+# ============================================================
+# Configure (déclaratif) — auth methods + KV v2 + policies + identités
+# ============================================================
+# Activer pour qu'Ansible configure tout le RBAC dès le premier run.
+# Idempotent : skip silencieux si tout est déjà aligné.
+openbao_auto_configure_enabled: false
+
+# Liste des projets — un mount kv-<name>/ + 2 policies (rw/ro) chacun.
+openbao_projects:
+  - name: projet-a
+  - name: projet-b
+
+# Utilisateurs userpass déclarés (mots de passe lus depuis vault.yml
+# via password_var pour ne pas mélanger liste publique et secret).
+openbao_userpass_users:
+  - name: alice
+    password_var: openbao_user_alice_password
+    policies: [admin]
+    token_ttl: 1h
+    token_max_ttl: 4h
+  - name: bob-app
+    password_var: openbao_user_bob_password
+    policies: [secrets-rw-projet-a]
+    token_ttl: 1h
+
+# AppRoles déclarés (la génération de secret_id est faite à part).
+openbao_approles:
+  - name: ci-projet-a
+    policies: [secrets-rw-projet-a]
+    token_ttl: 1h
+    token_max_ttl: 4h
+    secret_id_ttl: 24h
+    bind_secret_id: true
+  - name: app-projet-b-readonly
+    policies: [secrets-ro-projet-b]
+    token_ttl: 30m
+    secret_id_ttl: 168h
+    bind_secret_id: true

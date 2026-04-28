@@ -83,3 +83,18 @@ openbao_unseal_keys:
 # passphrase ansible-vault devient l'équivalent du seuil Shamir.
 # À traiter avec le même niveau de criticité qu'un coffre KMS.
 # ============================================================
+
+# ============================================================
+# Mots de passe userpass (déclaratif — uniquement si openbao_auto_configure_enabled)
+# ============================================================
+# Une variable par utilisateur déclaré dans openbao_userpass_users
+# (group_vars/all/main.yml). Le nom doit correspondre EXACTEMENT à
+# la valeur de password_var dans la liste des users.
+#
+# Exigences :
+#   - 16 caractères minimum
+#   - mélange majuscules / minuscules / chiffres / spéciaux
+#   - rotation annuelle minimum (révocation + replay du rôle)
+# ============================================================
+openbao_user_alice_password: "CHANGEME_strong_password_alice"
+openbao_user_bob_password: "CHANGEME_strong_password_bob"

@@ -1,0 +1,49 @@
+---
+# ============================================================
+# Gestion déclarative des utilisateurs userpass.
+# ============================================================
+# Pour chaque user de openbao_userpass_users :
+#   - lecture du mot de passe depuis vault.yml via la variable nommée
+#     dans `password_var` (clé indirecte → permet de séparer la liste
+#     des users (publique) du contenu des mots de passe (Vault chiffré).
+#   - PUT /v1/auth/userpass/users/<name>
+#     OpenBao traite ce PUT comme un upsert idempotent.
+#
+# Sécurité :
+#   - no_log: true partout (mot de passe transite dans le body).
+#   - Le password_var doit être défini dans vault.yml chiffré ;
+#     sinon échec explicite avant l'appel API.
+# ============================================================
+
+- name: Userpass — vérifier que tous les password_var sont définis
+  ansible.builtin.assert:
+    that:
+      - hostvars[inventory_hostname][item.password_var] is defined
+    fail_msg: >-
+      L'utilisateur userpass {{ item.name }} référence password_var={{ item.password_var }}
+      mais cette variable n'est pas définie. Renseigner inventories/production/group_vars/all/vault.yml.
+  loop: "{{ openbao_userpass_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Userpass — créer/mettre à jour les utilisateurs
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/auth/userpass/users/{{ item.name }}"
+    method: POST
+    body_format: json
+    body:
+      password: "{{ hostvars[inventory_hostname][item.password_var] }}"
+      policies: "{{ item.policies | join(',') }}"
+      token_ttl: "{{ item.token_ttl | default('1h') }}"
+      token_max_ttl: "{{ item.token_max_ttl | default('4h') }}"
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 204]
+  loop: "{{ openbao_userpass_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  check_mode: false
+  changed_when: true

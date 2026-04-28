@@ -1,0 +1,67 @@
+---
+# ============================================================
+# Configure : auth methods + secret engines + policies + identités.
+# ============================================================
+# Orchestrateur appelé par main.yml quand openbao_auto_configure_enabled=true.
+#
+# Pré-requis :
+#   - Cluster initialisé et unsealed (sys/health doit retourner 200/429).
+#   - openbao_root_token disponible :
+#       → soit lu depuis init.vault.yml (généré par tasks/init.yml),
+#       → soit fourni via --extra-vars / vault.yml.
+#
+# Toutes les tâches en aval s'exécutent sur le nœud bootstrap uniquement
+# (delegate_to + run_once), car elles passent par l'API du cluster — pas
+# besoin de les rejouer sur les 3 nœuds.
+# ============================================================
+
+- name: Configure — pré-flight, vérifier la disponibilité du root token
+  ansible.builtin.assert:
+    that:
+      - openbao_root_token is defined
+      - openbao_root_token | length > 0
+    fail_msg: >-
+      openbao_root_token n'est pas défini. Soit l'auto-init n'a pas
+      eu lieu (openbao_auto_init_enabled=true requis), soit il faut
+      fournir openbao_root_token via vault.yml ou --extra-vars.
+    quiet: true
+  no_log: true
+
+- name: Configure — pré-flight, vérifier la santé du cluster
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/sys/health"
+    method: GET
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 429]
+  register: _openbao_configure_health
+  changed_when: false
+  check_mode: false
+
+- name: Configure — afficher le résumé d'orchestration
+  ansible.builtin.debug:
+    msg:
+      - "Configure démarre sur {{ inventory_hostname }} (cluster sain)."
+      - "Méthodes auth : {{ openbao_auth_methods | map(attribute='path') | list }}"
+      - "Projets KV   : {{ openbao_projects | map(attribute='name') | list }}"
+      - "Users        : {{ openbao_userpass_users | map(attribute='name') | list }}"
+      - "AppRoles     : {{ openbao_approles | map(attribute='name') | list }}"
+
+- name: Configure — déployer les policies (admin, auditor, secrets-rw/ro par projet)
+  ansible.builtin.import_tasks: policies.yml
+
+- name: Configure — activer/tuner les méthodes d'authentification
+  ansible.builtin.import_tasks: auth_methods.yml
+
+- name: Configure — activer/tuner les secret engines (KV v2 par projet)
+  ansible.builtin.import_tasks: secret_engines.yml
+
+- name: Configure — créer/mettre à jour les utilisateurs userpass
+  ansible.builtin.import_tasks: userpass_users.yml
+
+- name: Configure — créer/mettre à jour les AppRoles
+  ansible.builtin.import_tasks: approles.yml
+
+- name: Configure — terminé
+  ansible.builtin.debug:
+    msg: "✅ Configure terminé. Cluster {{ openbao_cluster_name }} prêt à l'emploi."

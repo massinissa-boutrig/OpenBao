@@ -176,6 +176,100 @@ bao audit enable file file_path=/var/log/openbao/audit.log
 
 ---
 
+## 1bis. Configuration auth + secrets + policies (déclaratif)
+
+> **Une fois le cluster initialisé et unsealed**, le rôle `openbao` peut configurer lui-même les méthodes d'authentification (userpass, AppRole), les secret engines (KV v2 par projet) et les policies RBAC (admin, auditor, secrets-rw/ro par projet). C'est entièrement piloté par l'inventaire et idempotent.
+
+### 1bis.1 Pré-requis
+
+- Cluster initialisé et unsealed (cf. §1).
+- Le fichier `inventories/production/group_vars/all/init.vault.yml` existe (généré par l'auto-init) et contient `openbao_root_token`. Sinon, fournir le token via `vault.yml` ou `--extra-vars`.
+- Inventaire renseigné : `openbao_projects`, `openbao_userpass_users`, `openbao_approles` dans `group_vars/all/main.yml` ; mots de passe userpass dans `vault.yml` chiffré.
+
+### 1bis.2 Lancer la configuration
+
+Deux options équivalentes :
+
+```bash
+# Option A : playbook autonome
+ansible-playbook playbooks/configure.yml --ask-vault-pass
+
+# Option B : activer dans site.yml
+ansible-playbook playbooks/site.yml \
+  -e openbao_auto_configure_enabled=true --ask-vault-pass
+```
+
+À l'issue, le résumé en sortie liste les méthodes d'auth, les mounts KV, les users et les AppRoles configurés. Les policies déployées sont :
+
+| Policy | Capacités | Cible |
+|---|---|---|
+| `admin` | full sauf seal/init/snapshot-force | Opérateurs habilités |
+| `auditor` | read-only sur health/audit/metrics/policies/mounts | Auditeurs internes/externes |
+| `secrets-rw-<projet>` | CRUD sur `kv-<projet>/data/*` | CI/CD du projet |
+| `secrets-ro-<projet>` | read sur `kv-<projet>/data/*` | Workloads consommateurs |
+
+### 1bis.3 Ajouter un projet
+
+1. Ajouter `{ name: nouveau-projet }` dans `openbao_projects` (group_vars).
+2. Replay : `ansible-playbook playbooks/configure.yml --ask-vault-pass`.
+3. Le mount `kv-nouveau-projet/` et les policies `secrets-rw-nouveau-projet` + `secrets-ro-nouveau-projet` sont créés.
+
+### 1bis.4 Ajouter un utilisateur userpass
+
+1. Choisir un nom de variable mot de passe (ex : `openbao_user_carol_password`).
+2. L'ajouter dans `vault.yml` (chiffré) avec une valeur forte (16+ caractères).
+3. Déclarer l'utilisateur dans `openbao_userpass_users` :
+
+   ```yaml
+   - name: carol
+     password_var: openbao_user_carol_password
+     policies: [secrets-ro-projet-a, secrets-ro-projet-b]
+     token_ttl: 30m
+   ```
+
+4. Replay du playbook configure.
+
+### 1bis.5 AppRole : générer un secret_id
+
+La création de l'AppRole (role + policies + TTLs) est faite par `configure.yml`, mais la génération du `secret_id` est volontairement séparée pour utiliser le response wrapping (livraison one-shot, pas de stockage Ansible). Procédure manuelle en attendant le playbook dédié :
+
+```bash
+# Sur le nœud bootstrap, en tant qu'admin (token root ou admin)
+bao login -method=token
+
+# Générer un secret_id wrappé (ttl du wrap : 5 min)
+bao write -wrap-ttl=5m -f auth/approle/role/<nom-approle>/secret-id
+# → renvoie un wrap_token à transmettre IMMÉDIATEMENT au consommateur
+
+# Le consommateur unwrap le secret_id (one-shot)
+bao unwrap <wrap_token>
+# → renvoie le secret_id réel + son ttl
+
+# Récupérer le role_id (non sensible)
+bao read auth/approle/role/<nom-approle>/role-id
+```
+
+Le consommateur s'authentifie ensuite avec :
+
+```bash
+bao write auth/approle/login role_id=<role_id> secret_id=<secret_id>
+# → renvoie un token avec les policies de l'AppRole
+```
+
+### 1bis.6 Idempotence et drift
+
+Le playbook configure est **additif par défaut** : il crée et met à jour, mais ne supprime jamais. Pour purger un user / AppRole / mount qui n'est plus déclaré dans l'inventaire, l'opération est manuelle (sécurité) :
+
+```bash
+bao delete auth/userpass/users/<nom>
+bao delete auth/approle/role/<nom>
+bao secrets disable kv-<ancien-projet>/
+bao policy delete secrets-rw-<ancien-projet>
+bao policy delete secrets-ro-<ancien-projet>
+```
+
+---
+
 ## 2. Unseal après reboot
 
 > **Tout reboot d'un nœud OpenBao le re-met en `sealed`.** C'est volontaire (Shamir manuel, pas d'auto-unseal).

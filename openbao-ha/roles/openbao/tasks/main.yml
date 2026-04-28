@@ -51,3 +51,10 @@
   when: >-
     (openbao_auto_unseal_enabled | default(false) | bool)
     or (openbao_init_just_done | default(false) | bool)
+
+- name: Configure auth methods, secret engines, policies, identités
+  ansible.builtin.import_tasks: configure.yml
+  tags: [openbao, configure]
+  when: openbao_auto_configure_enabled | default(false) | bool
+  delegate_to: "{{ openbao_init_bootstrap_host }}"
+  run_once: true
