@@ -1,0 +1,64 @@
+---
+# Molecule scenario "default" — smoke test du rôle openbao
+# sur un container Debian 13 (Trixie).
+#
+# Lance le rôle (sans HAProxy ni Floating IP) en standalone, vérifie
+# que le service démarre et que le pré-flight passe. Pour un test HA
+# complet à 3 nœuds, utiliser un scénario dédié (à venir).
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ../../requirements.yml
+
+driver:
+  name: docker
+
+platforms:
+  - name: openbao-test
+    image: debian:trixie-slim
+    pre_build_image: true
+    privileged: true
+    command: /lib/systemd/systemd
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro
+    capabilities:
+      - SYS_ADMIN
+    tmpfs:
+      - /run
+      - /tmp
+    groups:
+      - openbao
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      stdout_callback: yaml
+      gather_facts: true
+  inventory:
+    group_vars:
+      openbao:
+        # Variables minimales pour passer le pré-flight + démarrer le service
+        openbao_version: "2.4.1"
+        openbao_listener_address: "0.0.0.0"
+        openbao_disable_mlock: true   # mlock pas dispo dans container
+        openbao_telemetry_prometheus_enabled: false
+        # Skip auto-init / unseal en test smoke (cluster 1 nœud non Raft)
+        openbao_auto_init_enabled: false
+        openbao_auto_unseal_enabled: false
+        openbao_auto_configure_enabled: false
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - idempotence
+    - verify
+    - destroy

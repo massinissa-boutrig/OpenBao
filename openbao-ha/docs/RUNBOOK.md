@@ -20,7 +20,7 @@
 
 ## 0. Prérequis OpenStack
 
-> **À lire avant tout déploiement.** Ce projet Ansible configure uniquement l'OS et les services — la création des VMs, des security groups, et de la VIP doit être faite en amont (Terraform, Heat, openstack CLI, ou console Horizon). Les éléments ci-dessous sont **indispensables** au bon fonctionnement de la HA.
+> **À lire avant tout déploiement.** Ce projet Ansible configure uniquement l'OS et les services — la création des VMs, des security groups, de la Floating IP et du compte Keystone dédié doit être faite en amont (Terraform, Heat, openstack CLI, ou console Horizon). Les éléments ci-dessous sont **indispensables** au bon fonctionnement de la HA.
 
 ### 0.1 ServerGroup anti-affinity (3 AZ)
 
@@ -55,27 +55,48 @@ Les 2 HAProxy peuvent être dans 2 AZ différentes (idéalement az-1 et az-2) sa
 | `openbao-nodes` | TCP 8200 | `haproxy-frontends` | API OpenBao |
 | `openbao-nodes` | TCP 8201 | `openbao-nodes` | Réplication Raft (mTLS) |
 | `haproxy-frontends` | TCP 22 | bastion | SSH admin |
-| `haproxy-frontends` | TCP 8200 | subnet clients | Frontend VIP |
+| `haproxy-frontends` | TCP 8200 | subnet clients | Frontend Floating IP |
 | `haproxy-frontends` | TCP 8404 | subnet supervision | Page stats HAProxy |
-| `haproxy-frontends` | protocol 112 (VRRP) | `haproxy-frontends` | keepalived |
 
-L'egress reste par défaut (all). nftables applique un second filtre local plus strict (policy drop).
+Plus aucune règle VRRP / protocole 112 : la bascule frontale est portée par l'API Neutron, pas par VRRP. L'egress doit autoriser HTTPS (443) sortant vers les endpoints Keystone et Neutron depuis `haproxy-frontends`. nftables applique un second filtre local plus strict (policy drop).
 
-### 0.3 VIP keepalived & allowed-address-pairs
+### 0.3 Floating IP Neutron préallouée
 
-OpenStack Neutron bloque par défaut tout trafic dont l'IP source ne correspond pas à celle du port. Or, keepalived fait flotter `10.10.0.100` entre ha-1 et ha-2 → il faut autoriser explicitement cette IP en `allowed-address-pairs` sur **les deux** ports Neutron des HAProxy.
+L'architecture utilise une **Floating IP OpenStack** réattachée entre les deux HAProxy via appel API Neutron (plus de VRRP, plus d'`allowed-address-pairs`). Il faut donc préallouer cette FIP sur un réseau externe et récupérer son UUID pour l'injecter dans `openstack_floating_ip_id` (vault).
 
 ```bash
-# Récupérer les IDs des ports
-PORT_HA1=$(openstack port list --server ha-1 -f value -c ID)
-PORT_HA2=$(openstack port list --server ha-2 -f value -c ID)
+# Création de la FIP (une seule fois)
+openstack floating ip create public --description "OpenBao HA frontend" -f value -c floating_ip_address -c id
+# → retenir l'adresse (ex : 10.10.0.100) ET l'UUID
 
-# Autoriser la VIP
-openstack port set --allowed-address ip-address=10.10.0.100 $PORT_HA1
-openstack port set --allowed-address ip-address=10.10.0.100 $PORT_HA2
+# L'attacher initialement au port de ha-1 pour démarrer sur le master
+PORT_HA1=$(openstack port list --server ha-1 -f value -c ID)
+openstack floating ip set --port $PORT_HA1 <fip_uuid>
 ```
 
-Sans cela, le trafic vers la VIP sera silencieusement droppé par Neutron après la bascule keepalived.
+Renseigner ensuite `openstack_floating_ip: 10.10.0.100` dans `hosts.yml` et `openstack_floating_ip_id: <uuid>` dans le vault. Le script `openbao-fip-failover.py` (rôle `openstack_fip`) prend ensuite le relais.
+
+### 0.6 Compte Keystone restreint pour le failover de FIP
+
+Le rôle `openstack_fip` déploie un script qui appelle Neutron pour réattacher la Floating IP. Ce compte doit avoir **le strict minimum de privilèges** : `update_floatingip` + `get_floatingip` sur la FIP cible et `get_port` sur les ports HAProxy. Rien de plus.
+
+```bash
+# Rôle Keystone dédié (à créer une fois)
+openstack role create openbao-fip-failover
+openstack user create --project <project> --password <mdp> openbao-fip-failover
+openstack role add --project <project> --user openbao-fip-failover openbao-fip-failover
+```
+
+Merger dans `/etc/neutron/policy.yaml` :
+
+```yaml
+"role:openbao-fip-failover and project_id:%(project_id)s":
+  - get_floatingip
+  - update_floatingip
+  - get_port
+```
+
+Vérification : depuis ha-1, `sudo -u openbao-fip ... floating ip show <uuid>` doit réussir, `... server list` doit échouer (Forbidden) — preuve que le compte est bien contraint. Rotation du mot de passe : tous les 6 mois minimum, via `openstack user set --password` puis replay du rôle.
 
 ### 0.4 Flavor et stockage recommandés
 
@@ -476,7 +497,7 @@ ansible-playbook playbooks/site.yml --tags openbao,config --ask-vault-pass
 | Service OpenBao | `journalctl -u openbao -f` |
 | Audit applicatif | `tail -f /var/log/openbao/audit.log` |
 | HAProxy | `journalctl -u haproxy -f` |
-| Keepalived | `journalctl -u keepalived -f` |
+| Failover FIP (service + timer) | `journalctl -u openbao-fip-failover.service -u openbao-fip-failover.timer -f` |
 
 ### 8.2 État du cluster
 
@@ -500,14 +521,25 @@ curl -k https://127.0.0.1:8200/v1/sys/health  # codes 200/429/472/473/501/503
 
 Page stats sur `https://<haproxy>:8404/stats` (auth `admin` / mot de passe vault). Vérifier la colonne `Status` : `UP` pour les nœuds disponibles, `DOWN` pour les sealed/down. La colonne `Cur` indique les sessions actives.
 
-### 8.4 Vérification de la VIP
+### 8.4 Vérification de la Floating IP
 
 ```bash
-ssh ha-a1
-ip addr show <interface>     # la VIP doit apparaître sur le MASTER actif
+# Depuis n'importe quel HAProxy (le clouds.yaml y est déployé)
+sudo -u openbao-fip env OS_CLIENT_CONFIG_FILE=/etc/openstack/clouds.yaml \
+  openstack --os-cloud openbao_fip floating ip show <fip_uuid> -f table
+# → Champ port_id doit pointer vers le port du HAProxy sain
+
+# État persistant du script (streaks OK/KO)
+cat /var/lib/openbao-fip/health.json
+
+# Derniers cycles du timer
+systemctl list-timers openbao-fip-failover.timer
+journalctl -u openbao-fip-failover.service -n 50
 ```
 
-Si la VIP n'apparaît nulle part : `journalctl -u keepalived` sur les deux pairs, vérifier que VRRP n'est pas bloqué par nftables (le set `vrrp_peers` doit contenir l'IP du pair, vérifier avec `nft list set inet filter vrrp_peers`).
+**Bascule manuelle** : `openstack --os-cloud openbao_fip floating ip set --port $(openstack port list --server <ha-X> -f value -c ID | head -1) <fip_uuid>`. Avec `fip_takeover_policy=preempt` et ha-1 sain, le script ramènera la FIP au tick suivant.
+
+**Causes fréquentes de non-bascule** : `403 Forbidden` (compte Keystone manque les droits, cf. §0.6) ; `NotFoundException` (UUID FIP incorrect dans le vault) ; `Connection refused /v1/sys/health` mais HAProxy actif (OpenBao sealed → 503 → considéré KO) ; streaks à 0 (le timer ne tourne pas, vérifier `systemctl status openbao-fip-failover.timer`).
 
 ### 8.5 Cas typiques
 

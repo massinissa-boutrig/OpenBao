@@ -1,0 +1,106 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  yamllint:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint
+        run: yamllint -f github .
+
+  ansible-lint:
+    name: ansible-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ansible + lint
+        run: |
+          pip install ansible-core ansible-lint
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint
+        run: ansible-lint --offline --profile production
+
+  syntax-check:
+    name: ansible-playbook --syntax-check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        playbook:
+          - pki.yml
+          - site.yml
+          - backup.yml
+          - unseal.yml
+          - init.yml
+          - configure.yml
+          - approle-secret-id.yml
+          - fip-failover-test.yml
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install ansible
+        run: |
+          pip install ansible-core
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Syntax check ${{ matrix.playbook }}
+        run: |
+          ansible-playbook --syntax-check \
+            -i inventories/production/hosts.yml \
+            playbooks/${{ matrix.playbook }}
+
+  molecule-default:
+    name: molecule (default)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install ansible-core molecule molecule-plugins[docker] docker
+          ansible-galaxy collection install -r requirements.yml
+
+      - name: Run molecule default
+        run: molecule test -s default
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"

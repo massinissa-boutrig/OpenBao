@@ -1,0 +1,63 @@
+---
+# ============================================================
+# Activation des audit devices.
+# ============================================================
+# OpenBao n'écrit RIEN dans son audit log par défaut. Sans audit
+# device activé, aucune trace des opérations API → impossible de
+# démontrer la conformité ISO/NIS2/DORA. C'est la première chose
+# à activer après l'init du cluster.
+#
+# Devices supportés ici :
+#   - file   : écrit /var/log/openbao/audit.log (rotation par logrotate)
+#   - syslog : envoie à journald → SIEM via journal-upload/forwarder
+#
+# Idempotence :
+#   1. GET /v1/sys/audit pour connaître l'existant.
+#   2. Si absent : POST /v1/sys/audit/<path> (enable).
+#   3. Si présent : on laisse en place (pas de tune sur audit devices,
+#      il faut disable+enable pour changer la config).
+# ============================================================
+
+- name: Audit — récupérer l'état actuel
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/sys/audit"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: 200
+    return_content: true
+  register: _openbao_audit_state
+  no_log: true
+  check_mode: false
+  changed_when: false
+
+- name: Audit — activer les devices manquants
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/sys/audit/{{ item.path }}"
+    method: POST
+    body_format: json
+    body:
+      type: "{{ item.type }}"
+      description: "{{ item.description | default('') }}"
+      options: "{{ item.options | default({}) }}"
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 204]
+  loop: "{{ openbao_audit_devices }}"
+  loop_control:
+    label: "{{ item.path }} ({{ item.type }})"
+  when: (item.path + '/') not in (_openbao_audit_state.json | default({}))
+  no_log: true
+  check_mode: false
+  changed_when: true
+
+- name: Audit — résumé
+  ansible.builtin.debug:
+    msg: >-
+      {{ openbao_audit_devices | length }} audit device(s) déclaré(s) :
+      {{ openbao_audit_devices | map(attribute='path') | list }}.
+      Tout nouvel accès à OpenBao sera tracé.

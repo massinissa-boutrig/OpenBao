@@ -1,0 +1,115 @@
+---
+- name: Preflight — vérifier vars critiques
+  ansible.builtin.assert:
+    that:
+      - openstack_floating_ip is defined
+      - openstack_floating_ip_id is defined
+      - openstack_auth is defined
+      - openstack_auth.auth_url is defined
+      - openstack_auth.username is defined
+      - openstack_auth.password is defined
+      - haproxy_priority in ['master', 'backup']
+    fail_msg: >-
+      Variables manquantes pour le rôle openstack_fip.
+      Vérifier vault.yml (openstack_auth, openstack_floating_ip_id) et
+      hosts.yml (openstack_floating_ip, haproxy_priority).
+  tags: [fip, preflight]
+
+- name: Installer python3-openstacksdk (apt Debian)
+  ansible.builtin.apt:
+    name:
+      - python3-openstacksdk
+      - python3-requests
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  tags: [fip, packages]
+
+- name: Créer le groupe système dédié
+  ansible.builtin.group:
+    name: "{{ fip_system_group }}"
+    system: true
+    state: present
+  tags: [fip, user]
+
+- name: Créer l'utilisateur système dédié (no shell, no home)
+  ansible.builtin.user:
+    name: "{{ fip_system_user }}"
+    group: "{{ fip_system_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    home: /nonexistent
+    state: present
+  tags: [fip, user]
+
+- name: Créer /etc/openstack (root:openbao-fip 0750)
+  ansible.builtin.file:
+    path: "{{ fip_config_dir }}"
+    state: directory
+    owner: root
+    group: "{{ fip_system_group }}"
+    mode: "0750"
+  tags: [fip, config]
+
+- name: Créer le répertoire d'état /var/lib/openbao-fip
+  ansible.builtin.file:
+    path: "{{ fip_state_dir }}"
+    state: directory
+    owner: "{{ fip_system_user }}"
+    group: "{{ fip_system_group }}"
+    mode: "0750"
+  tags: [fip, config]
+
+- name: Déployer clouds.yaml (lecture root + groupe fip uniquement)
+  ansible.builtin.template:
+    src: clouds.yaml.j2
+    dest: "{{ fip_clouds_yaml }}"
+    owner: root
+    group: "{{ fip_system_group }}"
+    mode: "0640"
+  no_log: true
+  notify: restart fip-failover timer
+  tags: [fip, config]
+
+- name: Déployer le script Python de failover
+  ansible.builtin.template:
+    src: openbao-fip-failover.py.j2
+    dest: "{{ fip_script_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: restart fip-failover timer
+  tags: [fip, script]
+
+- name: Déployer l'unité systemd (oneshot, hardée)
+  ansible.builtin.template:
+    src: openbao-fip-failover.service.j2
+    dest: /etc/systemd/system/openbao-fip-failover.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart fip-failover timer
+  tags: [fip, systemd]
+
+- name: Déployer le timer systemd
+  ansible.builtin.template:
+    src: openbao-fip-failover.timer.j2
+    dest: /etc/systemd/system/openbao-fip-failover.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart fip-failover timer
+  tags: [fip, systemd]
+
+- name: Activer et démarrer le timer
+  ansible.builtin.systemd:
+    name: openbao-fip-failover.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  tags: [fip, service]

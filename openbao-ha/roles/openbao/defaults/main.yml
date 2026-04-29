@@ -113,6 +113,53 @@ openbao_userpass_users: []
 
 # AppRoles à créer/maintenir (déclaratif).
 # Note : la génération de secret_id n'est PAS faite ici — voir
-# playbooks/approle-secret-id.yml (à créer plus tard) qui utilise
-# le response wrapping pour distribution one-shot sécurisée.
+# playbooks/approle-secret-id.yml qui utilise le response wrapping
+# pour distribution one-shot sécurisée.
 openbao_approles: []
+
+# Audit devices (par défaut : file + syslog pour éviter le SPOF).
+# Le file est rotaté par logrotate (cf. tasks/logrotate.yml).
+# Le syslog peut être forwardé vers un SIEM externe (rsyslog → SIEM).
+# MFA TOTP (login enforcement) — opt-in.
+# Activer pour exiger un code TOTP en plus du userpass à chaque login.
+# Une fois activé, les utilisateurs DOIVENT s'enrôler via la procédure
+# RUNBOOK §1bis.8 sinon ils ne pourront plus se connecter.
+openbao_mfa_enabled: false
+
+# Méthodes TOTP à créer.
+openbao_mfa_methods:
+  - method_name: totp-default
+    issuer: OpenBao
+    period: 30
+    key_size: 20
+    algorithm: SHA256
+    digits: 6
+    skew: 1
+    max_validation_attempts: 5
+
+# Login enforcements : qui doit fournir un TOTP, sur quelle auth method.
+# Par défaut : tous les logins userpass demandent un TOTP.
+openbao_mfa_enforcements:
+  - name: userpass-totp-required
+    mfa_method_names: [totp-default]
+    auth_method_types: [userpass]
+
+openbao_audit_devices:
+  - path: file
+    type: file
+    description: "Audit log fichier (rotaté par logrotate)"
+    options:
+      file_path: "{{ openbao_audit_log_path | default('/var/log/openbao/audit.log') }}"
+      log_raw: "false"
+      hmac_accessor: "true"
+      mode: "0600"
+      format: "json"
+  - path: syslog
+    type: syslog
+    description: "Audit log syslog (forward SIEM)"
+    options:
+      facility: "AUTH"
+      tag: "openbao"
+      log_raw: "false"
+      hmac_accessor: "true"
+      format: "json"

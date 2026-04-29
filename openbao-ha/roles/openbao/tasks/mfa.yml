@@ -1,0 +1,110 @@
+---
+# ============================================================
+# Activation du MFA TOTP (login MFA, post-login).
+# ============================================================
+# OpenBao supporte le login MFA depuis 1.13 :
+#   1. On définit une "MFA method" de type totp via /v1/identity/mfa/method/totp.
+#   2. On crée une "login enforcement" via /v1/identity/mfa/login-enforcement
+#      qui lie une ou plusieurs methods à des auth methods (userpass) ou
+#      à des entités spécifiques.
+#
+# Côté utilisateur, l'enrôlement TOTP se fait après le premier login :
+#   bao write -force identity/mfa/method/totp/<method_id>/admin-generate \
+#       entity_id=<entity_id>
+#   → renvoie une URL otpauth:// à scanner avec Google Auth, Authy, etc.
+#
+# Idempotence : on PUT toujours (config remplacée). OpenBao ne fournit
+# pas de GET clean pour comparer, donc on accepte des changed=true à
+# chaque run, c'est sans effet sur le service.
+# ============================================================
+
+- name: MFA — créer/mettre à jour les méthodes TOTP
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/identity/mfa/method/totp"
+    method: POST
+    body_format: json
+    body:
+      method_name: "{{ item.method_name }}"
+      issuer: "{{ item.issuer | default('OpenBao') }}"
+      period: "{{ item.period | default(30) }}"
+      key_size: "{{ item.key_size | default(20) }}"
+      qr_size: "{{ item.qr_size | default(200) }}"
+      algorithm: "{{ item.algorithm | default('SHA256') }}"
+      digits: "{{ item.digits | default(6) }}"
+      skew: "{{ item.skew | default(1) }}"
+      max_validation_attempts: "{{ item.max_validation_attempts | default(5) }}"
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 204]
+    return_content: true
+  loop: "{{ openbao_mfa_methods }}"
+  loop_control:
+    label: "{{ item.method_name }}"
+  register: _openbao_mfa_methods_result
+  no_log: true
+  check_mode: false
+  changed_when: true
+
+- name: MFA — récupérer les method_ids créés (mapping name → uuid)
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/identity/mfa/method/totp?list=true"
+    method: GET
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: 200
+    return_content: true
+  register: _openbao_mfa_list
+  no_log: true
+  check_mode: false
+  changed_when: false
+
+- name: MFA — résoudre les method_ids par nom
+  ansible.builtin.set_fact:
+    _openbao_mfa_method_id_map: >-
+      {{
+        dict(
+          (_openbao_mfa_list.json.data.key_info | dict2items)
+          | map(attribute='value.name')
+          | zip((_openbao_mfa_list.json.data.key_info | dict2items)
+                | map(attribute='key'))
+        )
+      }}
+  no_log: true
+
+- name: MFA — créer/mettre à jour les login enforcements
+  ansible.builtin.uri:
+    url: "{{ openbao_api_url }}/v1/identity/mfa/login-enforcement/{{ item.name }}"
+    method: POST
+    body_format: json
+    body:
+      mfa_method_ids: >-
+        {{ item.mfa_method_names
+           | map('extract', _openbao_mfa_method_id_map)
+           | list }}
+      auth_method_accessors: "{{ item.auth_method_accessors | default([]) }}"
+      auth_method_types: "{{ item.auth_method_types | default(['userpass']) }}"
+      identity_entity_ids: "{{ item.identity_entity_ids | default([]) }}"
+      identity_group_ids: "{{ item.identity_group_ids | default([]) }}"
+    headers:
+      X-Vault-Token: "{{ openbao_root_token }}"
+    validate_certs: true
+    ca_path: "{{ openbao_tls_dir }}/ca.crt"
+    status_code: [200, 204]
+  loop: "{{ openbao_mfa_enforcements }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  check_mode: false
+  changed_when: true
+
+- name: MFA — résumé
+  ansible.builtin.debug:
+    msg:
+      - "MFA TOTP configuré :"
+      - "  Methods       : {{ openbao_mfa_methods | map(attribute='method_name') | list }}"
+      - "  Enforcements  : {{ openbao_mfa_enforcements | map(attribute='name') | list }}"
+      - "  Enrôlement utilisateur : voir RUNBOOK §1bis.8"

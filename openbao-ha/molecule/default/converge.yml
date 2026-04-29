@@ -1,0 +1,15 @@
+---
+- name: Converge — installer le rôle openbao en standalone
+  hosts: openbao
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Installer pré-requis container (systemd, sudo)
+      ansible.builtin.apt:
+        name: [systemd, sudo, ca-certificates, curl, gnupg]
+        state: present
+        update_cache: true
+  roles:
+    - role: openbao
+      # On tagge pour pouvoir skipper certaines tâches non testables en container.
+      tags: openbao

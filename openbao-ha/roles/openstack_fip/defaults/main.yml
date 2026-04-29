@@ -1,0 +1,28 @@
+---
+# User/group système dédiés
+fip_system_user: openbao-fip
+fip_system_group: openbao-fip
+
+# Chemins
+fip_config_dir: /etc/openstack
+fip_clouds_yaml: "{{ fip_config_dir }}/clouds.yaml"
+fip_script_path: /usr/local/sbin/openbao-fip-failover.py
+fip_state_dir: /var/lib/openbao-fip
+
+# Health check OpenBao via HAProxy local
+fip_health_url: "https://127.0.0.1:{{ haproxy_frontend_port | default(8200) }}/v1/sys/health"
+fip_health_ca_path: /etc/haproxy/ca.crt
+
+# Anti-flap (nb de checks OK/KO consécutifs avant action)
+fip_health_consecutive_ok: 2
+fip_health_consecutive_ko: 3
+
+# Période du timer systemd (secondes)
+fip_timer_period_sec: 10
+
+# Timeout des appels Neutron
+fip_neutron_timeout_sec: 8
+
+# Politique de reprise : preempt = master sain reprend toujours,
+# sticky = master ne reprend que si la FIP est libre.
+fip_takeover_policy: preempt

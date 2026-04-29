@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+[Unit]
+Description=Run OpenBao Floating IP failover check periodically
+Documentation=file:///usr/local/sbin/openbao-fip-failover.py
+Requires=openbao-fip-failover.service
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec={{ fip_timer_period_sec }}s
+RandomizedDelaySec=2s
+AccuracySec=1s
+Unit=openbao-fip-failover.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

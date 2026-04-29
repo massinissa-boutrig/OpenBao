@@ -62,6 +62,13 @@
 - name: Configure — créer/mettre à jour les AppRoles
   ansible.builtin.import_tasks: approles.yml
 
+- name: Configure — activer les audit devices (file + syslog)
+  ansible.builtin.import_tasks: audit.yml
+
+- name: Configure — activer le MFA TOTP (méthodes + enforcements)
+  ansible.builtin.import_tasks: mfa.yml
+  when: openbao_mfa_enabled | default(false) | bool
+
 - name: Configure — terminé
   ansible.builtin.debug:
     msg: "✅ Configure terminé. Cluster {{ openbao_cluster_name }} prêt à l'emploi."

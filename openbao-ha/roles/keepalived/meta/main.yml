@@ -1,4 +1,7 @@
 ---
+# ⚠️ DEPRECATED — ce rôle n'est plus utilisé depuis le passage à la
+# bascule Floating IP OpenStack via l'API Neutron (rôle openstack_fip).
+# Conservé pour permettre un rollback rapide. Ne pas référencer dans site.yml.
 galaxy_info:
   role_name: keepalived
   namespace: acme

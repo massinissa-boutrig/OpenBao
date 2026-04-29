@@ -1,0 +1,72 @@
+---
+- name: Verify — état du rôle openbao
+  hosts: openbao
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: User openbao créé
+      ansible.builtin.user:
+        name: openbao
+        state: present
+      check_mode: true
+      register: _user_check
+      failed_when: _user_check.changed
+
+    - name: Binaire bao installé
+      ansible.builtin.stat:
+        path: /usr/bin/bao
+      register: _bao_bin
+      failed_when: not _bao_bin.stat.exists
+
+    - name: Config openbao.hcl déployée
+      ansible.builtin.stat:
+        path: /etc/openbao/openbao.hcl
+      register: _bao_conf
+      failed_when: not _bao_conf.stat.exists or _bao_conf.stat.size < 100
+
+    - name: TLS material en place
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /etc/openbao/tls/ca.crt
+        - /etc/openbao/tls/server.crt
+        - /etc/openbao/tls/server.key
+      register: _tls
+      failed_when: not _tls.results | map(attribute='stat.exists') | list | min
+
+    - name: Unit systemd openbao.service présente
+      ansible.builtin.stat:
+        path: /etc/systemd/system/openbao.service
+      register: _svc
+      failed_when: not _svc.stat.exists
+
+    - name: Service openbao actif
+      ansible.builtin.command: systemctl is-active openbao
+      register: _is_active
+      changed_when: false
+      failed_when: _is_active.stdout != "active"
+
+    - name: Listener TCP 8200 répond
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8200
+        timeout: 30
+
+    - name: /v1/sys/health répond (501 = non init, c'est attendu)
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:8200/v1/sys/health"
+        validate_certs: true
+        ca_path: /etc/openbao/tls/ca.crt
+        status_code: [200, 429, 501, 503]
+      register: _health
+      failed_when: _health.status not in [200, 429, 501, 503]
+
+    - name: Résumé
+      ansible.builtin.debug:
+        msg:
+          - "✅ User openbao OK"
+          - "✅ Binaire /usr/bin/bao OK"
+          - "✅ Config + TLS OK"
+          - "✅ Service actif"
+          - "✅ Listener 8200 répond (status={{ _health.status }})"

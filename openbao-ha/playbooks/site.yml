@@ -1,6 +1,7 @@
 ---
 # ============================================================
-# Orchestration complète : déploie OpenBao + HAProxy + keepalived
+# Orchestration complète : OpenBao + HAProxy + Floating IP failover
+# (architecture sans keepalived/VRRP, basée sur Floating IP OpenStack)
 #
 # Init et unseal automatiques :
 #   Si openbao_auto_init_enabled=true (defaults rôle openbao ou
@@ -24,9 +25,9 @@
   roles:
     - haproxy
 
-- name: Déployer keepalived (VIP par DC)
+- name: Déployer le failover Floating IP (script + systemd timer)
   hosts: haproxy
   become: true
   gather_facts: true
   roles:
-    - keepalived
+    - openstack_fip
