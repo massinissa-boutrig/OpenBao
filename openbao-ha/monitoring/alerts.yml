@@ -1,0 +1,151 @@
+---
+# Règles d'alerte Prometheus pour le cluster OpenBao HA.
+# À déposer dans /etc/prometheus/rules/openbao.yml et inclure dans prometheus.yml.
+
+groups:
+  - name: openbao-critical
+    interval: 30s
+    rules:
+
+      - alert: OpenBaoSealed
+        expr: openbao_core_unsealed{} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: openbao
+        annotations:
+          summary: "Nœud OpenBao {{ $labels.instance }} est SEALED"
+          description: |
+            Le nœud {{ $labels.instance }} n'est plus disponible (sealed).
+            Cela arrive après un reboot. Procédure de re-unseal :
+            voir RUNBOOK §2 (mobiliser 3 opérateurs sur 5).
+
+      - alert: OpenBaoLeaderLost
+        expr: |
+          absent(openbao_core_active{instance=~".+"}) == 1
+          OR sum(openbao_core_active{}) == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: openbao
+        annotations:
+          summary: "Aucun leader Raft détecté sur le cluster OpenBao"
+          description: |
+            Le cluster Raft n'a pas de leader actif depuis 30s. Toutes les
+            écritures sont bloquées. Vérifier la connectivité inter-AZ et
+            l'état des 3 nœuds (raft list-peers, journalctl -u openbao).
+
+      - alert: OpenBaoLeaderFlapping
+        expr: changes(openbao_core_active{}[5m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+          service: openbao
+        annotations:
+          summary: "Le leader Raft change trop souvent ({{ $value }}× en 5min)"
+          description: |
+            Plus de 3 changements de leader en 5 minutes sur {{ $labels.instance }}.
+            Symptôme typique de latence inter-nœuds élevée ou de saturation
+            CPU/IO. Vérifier les métriques système et la qualité du réseau.
+
+      - alert: OpenBaoMfaFailureSpike
+        expr: |
+          increase(openbao_login_mfa_validate_failure_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: openbao
+        annotations:
+          summary: "Pic d'échecs MFA sur OpenBao ({{ $value }} en 5min)"
+          description: |
+            Plus de 10 échecs MFA en 5 minutes. Possible : utilisateurs avec
+            authenticator désynchronisé (vérifier NTP), ou tentative de
+            bruteforce. Inspecter l'audit log : grep mfa /var/log/openbao/audit.log
+
+      - alert: OpenBaoAuditLogWriteFailure
+        expr: |
+          increase(openbao_audit_file_log_request_failure_total[5m]) > 0
+          OR increase(openbao_audit_syslog_log_request_failure_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: openbao
+        annotations:
+          summary: "OpenBao ne peut plus écrire dans son audit log"
+          description: |
+            Si TOUS les audit devices échouent, OpenBao bloque toutes les
+            requêtes (politique de sécurité). Vérifier l'espace disque
+            /var/log/openbao/, les permissions, et la connectivité syslog.
+
+      - alert: OpenBaoRaftSnapshotStale
+        expr: |
+          (time() - openbao_raft_last_snapshot_timestamp_seconds) > 25200
+        for: 30m
+        labels:
+          severity: warning
+          service: openbao
+        annotations:
+          summary: "Pas de snapshot Raft depuis plus de 7 heures"
+          description: |
+            Le dernier snapshot Raft remonte à
+            {{ $value | humanizeDuration }}. Risque RPO non respecté
+            (objectif ≤ 6h). Vérifier le cron du playbook backup.yml
+            sur le contrôleur Ansible.
+
+  - name: openbao-warnings
+    interval: 60s
+    rules:
+
+      - alert: OpenBaoCertExpiringSoon
+        expr: |
+          (openbao_core_listener_cert_expiry_timestamp - time()) / 86400 < 14
+        for: 1h
+        labels:
+          severity: warning
+          service: openbao
+        annotations:
+          summary: "Cert TLS OpenBao {{ $labels.instance }} expire dans <14 jours"
+          description: |
+            Cert : {{ $labels.cn }}, expiration dans
+            {{ $value | humanize }} jours.
+            Lancer playbooks/pki-rotate.yml AVANT expiration.
+
+      - alert: OpenBaoTokenStoreFull
+        expr: openbao_token_count > 50000
+        for: 30m
+        labels:
+          severity: warning
+          service: openbao
+        annotations:
+          summary: "Nombre de tokens OpenBao élevé ({{ $value }})"
+          description: |
+            Plus de 50k tokens actifs. Risque de saturation du token store
+            et de ralentissement. Vérifier les TTL configurés et
+            envisager une revue des AppRoles bind_secret_id.
+
+  - name: haproxy
+    interval: 30s
+    rules:
+
+      - alert: HAProxyBackendDown
+        expr: haproxy_backend_status{state="DOWN"} == 1
+        for: 1m
+        labels:
+          severity: critical
+          service: haproxy
+        annotations:
+          summary: "Backend HAProxy {{ $labels.backend }} DOWN"
+
+      - alert: FloatingIPNotMigrated
+        expr: |
+          sum by (cluster) (openbao_fip_attached{}) != 1
+        for: 2m
+        labels:
+          severity: critical
+          service: fip-failover
+        annotations:
+          summary: "Floating IP non attachée OU attachée à plusieurs hôtes"
+          description: |
+            Sum = {{ $value }} (devrait être 1). Soit la FIP n'est attachée
+            à aucun HAProxy (perte de service), soit à plusieurs (split brain).
+            Vérifier journalctl -u openbao-fip-failover et l'état Neutron.

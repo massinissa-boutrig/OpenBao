@@ -1,0 +1,51 @@
+# {{ ansible_managed }}
+# Prometheus scrape config — à intégrer dans prometheus.yml du serveur
+# de monitoring (sous scrape_configs:).
+#
+# OpenBao expose ses métriques sur /v1/sys/metrics?format=prometheus.
+# Authentification : token avec policy "auditor" (read sur sys/metrics).
+
+scrape_configs:
+  - job_name: openbao
+    metrics_path: /v1/sys/metrics
+    params:
+      format: ['prometheus']
+    scheme: https
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    tls_config:
+      ca_file: /etc/prometheus/openbao-ca.crt
+      insecure_skip_verify: false
+    bearer_token_file: /etc/prometheus/openbao-auditor.token
+    static_configs:
+      - targets:
+          - bao-node-1.intra:8200
+          - bao-node-2.intra:8200
+          - bao-node-3.intra:8200
+        labels:
+          service: openbao
+          cluster: openbao-prod
+
+  - job_name: haproxy
+    metrics_path: /metrics
+    scheme: http
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - ha-1.intra:8404
+          - ha-2.intra:8404
+        labels:
+          service: haproxy
+          cluster: openbao-prod
+
+  - job_name: openbao_fip_failover
+    metrics_path: /metrics
+    scheme: http
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - ha-1.intra:9101
+          - ha-2.intra:9101
+        labels:
+          service: fip-failover
+          cluster: openbao-prod

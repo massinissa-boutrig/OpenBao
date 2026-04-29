@@ -1,0 +1,47 @@
+---
+# ============================================================
+# Forwarder rsyslog vers SIEM externe (TLS).
+# ============================================================
+# Toutes les entrées audit log syslog (facility AUTH, tag openbao)
+# sont forwardées vers un endpoint SIEM (Splunk, Graylog, Elastic,
+# Wazuh, etc.) en TCP+TLS.
+#
+# Pré-requis :
+#   - openbao_siem_host + openbao_siem_port définis dans l'inventaire
+#   - openbao_siem_ca_path : CA du SIEM (pour valider son cert)
+#   - rsyslog installé (présent par défaut sur Debian)
+# ============================================================
+
+- name: Syslog — installer rsyslog et son module TLS
+  ansible.builtin.apt:
+    name:
+      - rsyslog
+      - rsyslog-gnutls
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Syslog — déployer la CA du SIEM
+  ansible.builtin.copy:
+    src: "{{ openbao_siem_ca_local_path }}"
+    dest: "{{ openbao_siem_ca_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: openbao_siem_ca_local_path is defined
+  notify: restart rsyslog
+
+- name: Syslog — déployer la conf de forward
+  ansible.builtin.template:
+    src: rsyslog-siem.conf.j2
+    dest: /etc/rsyslog.d/50-openbao-siem.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart rsyslog
+
+- name: Syslog — activer rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    enabled: true
+    state: started

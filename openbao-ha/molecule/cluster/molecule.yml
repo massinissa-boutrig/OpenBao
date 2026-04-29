@@ -1,0 +1,111 @@
+---
+# Molecule scenario "cluster" — déploiement HA 3 nœuds + 1 HAProxy.
+#
+# Vérifie le pipeline complet : site.yml + init.yml + configure.yml,
+# puis raft list-peers (3 voters), policies déployées, audit log actif.
+#
+# Pas de Floating IP en mode container (pas de Neutron). On simule
+# en exposant le port 8200 du HAProxy uniquement.
+
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ../../requirements.yml
+
+driver:
+  name: docker
+
+platforms:
+  - name: bao-node-1
+    image: debian:trixie-slim
+    pre_build_image: true
+    privileged: true
+    command: /lib/systemd/systemd
+    volumes: [/sys/fs/cgroup:/sys/fs/cgroup:ro]
+    capabilities: [SYS_ADMIN]
+    tmpfs: [/run, /tmp]
+    networks: [{name: openbao-net}]
+    groups: [openbao]
+    docker_networks: [{name: openbao-net}]
+
+  - name: bao-node-2
+    image: debian:trixie-slim
+    pre_build_image: true
+    privileged: true
+    command: /lib/systemd/systemd
+    volumes: [/sys/fs/cgroup:/sys/fs/cgroup:ro]
+    capabilities: [SYS_ADMIN]
+    tmpfs: [/run, /tmp]
+    networks: [{name: openbao-net}]
+    groups: [openbao]
+
+  - name: bao-node-3
+    image: debian:trixie-slim
+    pre_build_image: true
+    privileged: true
+    command: /lib/systemd/systemd
+    volumes: [/sys/fs/cgroup:/sys/fs/cgroup:ro]
+    capabilities: [SYS_ADMIN]
+    tmpfs: [/run, /tmp]
+    networks: [{name: openbao-net}]
+    groups: [openbao]
+
+  - name: ha-1
+    image: debian:trixie-slim
+    pre_build_image: true
+    privileged: true
+    command: /lib/systemd/systemd
+    volumes: [/sys/fs/cgroup:/sys/fs/cgroup:ro]
+    capabilities: [SYS_ADMIN]
+    tmpfs: [/run, /tmp]
+    networks: [{name: openbao-net}]
+    groups: [haproxy]
+
+provisioner:
+  name: ansible
+  config_options:
+    defaults:
+      stdout_callback: yaml
+      gather_facts: true
+      host_key_checking: false
+  inventory:
+    group_vars:
+      all:
+        internal_domain: molecule.test
+        openbao_disable_mlock: true       # mlock pas dispo en container
+        openbao_telemetry_prometheus_enabled: false
+        # Auto-init + unseal + configure activés pour test E2E
+        openbao_auto_init_enabled: true
+        openbao_auto_unseal_enabled: false  # déclenché par init_just_done
+        openbao_auto_configure_enabled: true
+        openbao_init_bootstrap_host: bao-node-1
+        openbao_projects:
+          - name: test-projet
+        openbao_userpass_users:
+          - name: testadmin
+            password_var: openbao_user_testadmin_password
+            policies: [admin]
+        openbao_user_testadmin_password: "MoleculeTestPassword123!"
+        openbao_approles:
+          - name: test-approle
+            policies: [secrets-rw-test-projet]
+            token_ttl: 30m
+            secret_id_ttl: 1h
+            bind_secret_id: true
+        openbao_mfa_enabled: false        # pas de MFA en test E2E
+        openbao_siem_enabled: false
+        openbao_init_vault_path: /tmp/init.vault.yml
+        openbao_init_vault_password_file: /tmp/vault.pass
+
+verifier:
+  name: ansible
+
+scenario:
+  test_sequence:
+    - dependency
+    - syntax
+    - create
+    - prepare
+    - converge
+    - verify
+    - destroy

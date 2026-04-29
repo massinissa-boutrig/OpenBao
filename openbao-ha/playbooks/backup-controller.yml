@@ -1,0 +1,155 @@
+---
+# ============================================================
+# Sauvegarde chiffrée des fichiers sensibles côté contrôleur Ansible.
+# ============================================================
+#
+# Quoi sauvegarder ?
+#   - inventories/production/group_vars/all/init.vault.yml
+#     (5 unseal keys + root_token, déjà chiffré ansible-vault, mais on
+#      le re-chiffre GPG pour double couche et portabilité hors-Ansible)
+#   - inventories/production/group_vars/all/vault.yml
+#     (passphrase CA, mots de passe userpass, openstack_auth)
+#   - pki/ (CA privée si générée localement)
+#   - /tmp/openbao-wrap-*.token éventuels (à transmettre puis détruire)
+#
+# Format : tar.gz | gpg --symmetric (AES256). Une seule passphrase à
+# retenir, distincte de celle d'ansible-vault.
+#
+# Destination :
+#   - Local : /var/backups/openbao-controller/
+#   - À synchroniser ensuite vers stockage externe (NAS, S3, USB hardware)
+#     via cron OS — hors scope de ce playbook (volontaire, on ne veut
+#     pas que la passphrase de chiffrement transite par Ansible).
+#
+# Usage :
+#   ansible-playbook playbooks/backup-controller.yml \
+#     -e "backup_passphrase_file=~/.openbao/backup.pass"
+#
+# Le fichier de passphrase doit être ~/.openbao/backup.pass (mode 0400),
+# contenu : une seule ligne avec la passphrase symétrique.
+#
+# Restauration :
+#   gpg --decrypt < backup-YYYYMMDD-HHMMSS.tar.gz.gpg | tar -xzf -
+# ============================================================
+- name: Sauvegarder les fichiers sensibles du contrôleur Ansible
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false
+
+  vars:
+    backup_dir: "{{ ansible_env.HOME }}/openbao-controller-backups"
+    backup_passphrase_file: "{{ ansible_env.HOME }}/.openbao/backup.pass"
+    timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    backup_basename: "openbao-ctrl-{{ timestamp }}"
+    backup_archive: "{{ backup_dir }}/{{ backup_basename }}.tar.gz"
+    backup_encrypted: "{{ backup_dir }}/{{ backup_basename }}.tar.gz.gpg"
+    backup_paths:
+      - "{{ playbook_dir }}/../inventories/production/group_vars/all/init.vault.yml"
+      - "{{ playbook_dir }}/../inventories/production/group_vars/all/vault.yml"
+      - "{{ playbook_dir }}/../pki"
+
+  tasks:
+
+    - name: Pré-requis — passphrase backup présente
+      ansible.builtin.stat:
+        path: "{{ backup_passphrase_file }}"
+      register: _passphrase_stat
+      no_log: true
+
+    - name: Pré-requis — passphrase manquante
+      ansible.builtin.fail:
+        msg: >-
+          Passphrase backup absente : {{ backup_passphrase_file }}.
+          Créer le fichier (chmod 0400) avec une passphrase forte (32+ chars)
+          AVANT de lancer ce playbook. Cette passphrase doit être stockée
+          séparément (KeePass perso, pas avec ansible-vault).
+      when: not _passphrase_stat.stat.exists
+
+    - name: Pré-requis — gpg installé
+      ansible.builtin.command: gpg --version
+      register: _gpg_version
+      changed_when: false
+
+    - name: Créer le répertoire de sauvegarde
+      ansible.builtin.file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Vérifier l'existence des sources à sauvegarder
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop: "{{ backup_paths }}"
+      register: _sources_stat
+
+    - name: Lister les sources existantes (filtrage des absentes)
+      ansible.builtin.set_fact:
+        backup_paths_present: >-
+          {{ _sources_stat.results
+             | selectattr('stat.exists', 'equalto', true)
+             | map(attribute='item')
+             | list }}
+
+    - name: Créer l'archive tar.gz (sources existantes uniquement)
+      ansible.builtin.command:
+        cmd: >-
+          tar -czf {{ backup_archive }}
+          {{ backup_paths_present | map('quote') | join(' ') }}
+      changed_when: true
+
+    - name: Chiffrer l'archive avec GPG (AES256, symétrique)
+      ansible.builtin.command:
+        cmd: >-
+          gpg --batch --yes
+          --passphrase-file {{ backup_passphrase_file }}
+          --cipher-algo AES256
+          --symmetric
+          --output {{ backup_encrypted }}
+          {{ backup_archive }}
+      no_log: true
+      changed_when: true
+
+    - name: Supprimer l'archive tar.gz en clair (shred)
+      ansible.builtin.command:
+        cmd: shred -u {{ backup_archive }}
+      changed_when: true
+
+    - name: Calculer la checksum SHA256 du chiffré (pour vérif intégrité)
+      ansible.builtin.command:
+        cmd: sha256sum {{ backup_encrypted }}
+      register: _backup_sha256
+      changed_when: false
+
+    - name: Écrire la checksum à côté
+      ansible.builtin.copy:
+        content: "{{ _backup_sha256.stdout }}\n"
+        dest: "{{ backup_encrypted }}.sha256"
+        mode: "0600"
+
+    - name: Lister les anciennes sauvegardes (rotation)
+      ansible.builtin.find:
+        paths: "{{ backup_dir }}"
+        patterns: "openbao-ctrl-*.tar.gz.gpg"
+        age: "30d"
+      register: _old_backups
+
+    - name: Supprimer les sauvegardes > 30 jours
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ _old_backups.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
+
+    - name: Résumé
+      ansible.builtin.debug:
+        msg:
+          - "✅ Sauvegarde chiffrée créée :"
+          - "   {{ backup_encrypted }}"
+          - "   SHA256 : {{ _backup_sha256.stdout.split()[0] }}"
+          - "   Taille : {{ (lookup('file', backup_encrypted) | length / 1024) | int }} KB"
+          - "📌 SYNCHRONISER MAINTENANT vers stockage externe :"
+          - "   - NAS chiffré, S3-compatible, ou USB hardware-encrypted"
+          - "   - Conserver minimum 90 jours en multiples emplacements"
+          - "   - La passphrase GPG NE DOIT PAS être stockée à côté"

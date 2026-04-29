@@ -144,6 +144,22 @@ openbao_mfa_enforcements:
     mfa_method_names: [totp-default]
     auth_method_types: [userpass]
 
+# ============================================================
+# Forwarder rsyslog vers SIEM externe (TCP+TLS)
+# ============================================================
+# Activer pour pousser les logs audit OpenBao + sshd + HAProxy vers
+# un SIEM (Splunk, Graylog, Elastic, Wazuh). Tracé externe = exigence
+# DORA / NIS2 / ISO 27001.
+openbao_siem_enabled: false
+
+# Endpoint SIEM (à surcharger en inventaire).
+openbao_siem_host: "siem.intra.example.org"
+openbao_siem_port: 6514
+
+# CA du SIEM — chemin sur le contrôleur (sera copié sur les nœuds)
+# openbao_siem_ca_local_path: files/siem-ca.crt
+openbao_siem_ca_path: /etc/rsyslog.d/siem-ca.crt
+
 openbao_audit_devices:
   - path: file
     type: file

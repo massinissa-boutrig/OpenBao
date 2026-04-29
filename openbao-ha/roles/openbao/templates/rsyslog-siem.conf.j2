@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+# Forwarder rsyslog : audit OpenBao + logs HAProxy → SIEM TCP+TLS.
+#
+# Source : facility AUTH (audit OpenBao) + facility LOCAL0 (HAProxy).
+# Cible  : {{ openbao_siem_host }}:{{ openbao_siem_port }} (TLS).
+
+# Charger les modules TLS
+module(load="omfwd")
+module(load="imfile")
+
+# Configuration TLS globale (certs serveur SIEM)
+global(
+  defaultNetstreamDriver="gtls"
+  defaultNetstreamDriverCAFile="{{ openbao_siem_ca_path }}"
+)
+
+# Forward facility AUTH (audit OpenBao + sshd) vers le SIEM
+auth.* action(
+  type="omfwd"
+  target="{{ openbao_siem_host }}"
+  port="{{ openbao_siem_port }}"
+  protocol="tcp"
+  StreamDriver="gtls"
+  StreamDriverMode="1"
+  StreamDriverAuthMode="x509/name"
+  StreamDriverPermittedPeers="{{ openbao_siem_host }}"
+  Action.ResumeRetryCount="-1"
+  queue.type="LinkedList"
+  queue.size="50000"
+  queue.filename="openbao-siem-spool"
+  queue.saveOnShutdown="on"
+)
+
+# Forward HAProxy (facility LOCAL0 par défaut) vers le SIEM
+local0.* action(
+  type="omfwd"
+  target="{{ openbao_siem_host }}"
+  port="{{ openbao_siem_port }}"
+  protocol="tcp"
+  StreamDriver="gtls"
+  StreamDriverMode="1"
+  StreamDriverAuthMode="x509/name"
+  StreamDriverPermittedPeers="{{ openbao_siem_host }}"
+  Action.ResumeRetryCount="-1"
+  queue.type="LinkedList"
+  queue.size="50000"
+  queue.filename="haproxy-siem-spool"
+  queue.saveOnShutdown="on"
+)

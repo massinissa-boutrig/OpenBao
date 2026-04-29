@@ -1,0 +1,23 @@
+---
+- name: Prepare — installer pré-requis dans tous les containers
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Installer dépendances de base
+      ansible.builtin.apt:
+        name: [systemd, sudo, ca-certificates, curl, gnupg, openssl]
+        state: present
+        update_cache: true
+
+- name: Prepare — passphrase ansible-vault factice pour le test
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Créer fichier passphrase pour init.vault.yml
+      ansible.builtin.copy:
+        content: "molecule-test-vault-passphrase"
+        dest: /tmp/vault.pass
+        mode: "0600"

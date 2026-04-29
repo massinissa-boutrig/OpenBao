@@ -1,0 +1,211 @@
+---
+# ============================================================
+# Bootstrap : créer AppRole admin + révoquer le root token.
+# ============================================================
+#
+# Objectif :
+#   Le root token généré par sys/init est ALL-POWERFUL et n'expire
+#   jamais. Bonne pratique : créer immédiatement un AppRole admin
+#   avec policy admin (full access sauf seal/init), puis révoquer
+#   le root token. Tout accès admin futur passe par l'AppRole.
+#
+# Ce playbook est IDEMPOTENT :
+#   - Si l'AppRole "admin-bootstrap" existe déjà → skip création.
+#   - Si le root token a déjà été révoqué → skip (lookup-self échoue).
+#
+# Usage :
+#   # 1ère exécution, après init+configure :
+#   ansible-playbook playbooks/bootstrap-revoke-root.yml --ask-vault-pass
+#
+# Sortie :
+#   - Crée l'AppRole admin-bootstrap (si absent)
+#   - Génère un secret_id wrappé (ttl 5 min)
+#   - Affiche le wrap_token + role_id à transmettre IMMÉDIATEMENT à
+#     l'opérateur lead (KeePass perso)
+#   - Révoque le root token
+#   - Met à jour init.vault.yml pour retirer openbao_root_token
+#
+# ⚠️ Une fois exécuté, openbao_root_token N'EXISTE PLUS. Tous les
+# playbooks qui en dépendent (configure.yml, audit, mfa, etc.)
+# devront utiliser un token admin (AppRole login) à la place.
+# ============================================================
+- name: Bootstrap admin AppRole et révocation root token
+  hosts: openbao
+  become: false
+  gather_facts: true
+  vars_files:
+    - "{{ inventory_dir }}/group_vars/all/init.vault.yml"
+  vars:
+    bootstrap_approle_name: admin-bootstrap
+    wrap_ttl: 5m
+
+  tasks:
+
+    - name: Pré-flight — vérifier que le root token est encore valide
+      ansible.builtin.uri:
+        url: "{{ openbao_api_url }}/v1/auth/token/lookup-self"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+        validate_certs: true
+        ca_path: "{{ openbao_tls_dir }}/ca.crt"
+        status_code: [200, 403]
+      register: _root_lookup
+      delegate_to: "{{ openbao_init_bootstrap_host }}"
+      run_once: true
+      no_log: true
+      check_mode: false
+      changed_when: false
+
+    - name: Skip — root token déjà révoqué
+      ansible.builtin.meta: end_play
+      when: _root_lookup.status == 403
+
+    - name: Vérifier si l'AppRole admin-bootstrap existe déjà
+      ansible.builtin.uri:
+        url: "{{ openbao_api_url }}/v1/auth/approle/role/{{ bootstrap_approle_name }}"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+        validate_certs: true
+        ca_path: "{{ openbao_tls_dir }}/ca.crt"
+        status_code: [200, 404]
+      register: _approle_exists
+      delegate_to: "{{ openbao_init_bootstrap_host }}"
+      run_once: true
+      no_log: true
+      check_mode: false
+      changed_when: false
+
+    - name: Créer l'AppRole admin-bootstrap (si absent)
+      ansible.builtin.uri:
+        url: "{{ openbao_api_url }}/v1/auth/approle/role/{{ bootstrap_approle_name }}"
+        method: POST
+        body_format: json
+        body:
+          token_policies: "admin"
+          token_ttl: "1h"
+          token_max_ttl: "8h"
+          secret_id_ttl: "0"           # secret_id non expirant
+          secret_id_num_uses: "0"      # secret_id réutilisable
+          bind_secret_id: true
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+        validate_certs: true
+        ca_path: "{{ openbao_tls_dir }}/ca.crt"
+        status_code: [200, 204]
+      delegate_to: "{{ openbao_init_bootstrap_host }}"
+      run_once: true
+      when: _approle_exists.status == 404
+      no_log: true
+      check_mode: false
+      changed_when: true
+
+    - name: Récupérer le role_id de admin-bootstrap
+      ansible.builtin.uri:
+        url: "{{ openbao_api_url }}/v1/auth/approle/role/{{ bootstrap_approle_name }}/role-id"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+        validate_certs: true
+        ca_path: "{{ openbao_tls_dir }}/ca.crt"
+        status_code: 200
+        return_content: true
+      register: _role_id
+      delegate_to: "{{ openbao_init_bootstrap_host }}"
+      run_once: true
+      no_log: true
+      check_mode: false
+      changed_when: false
+
+    - name: Générer un secret_id wrappé (à transmettre au lead opérateur)
+      ansible.builtin.uri:
+        url: "{{ openbao_api_url }}/v1/auth/approle/role/{{ bootstrap_approle_name }}/secret-id"
+        method: POST
+        body_format: json
+        body: {}
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+          X-Vault-Wrap-TTL: "{{ wrap_ttl }}"
+        validate_certs: true
+        ca_path: "{{ openbao_tls_dir }}/ca.crt"
+        status_code: 200
+        return_content: true
+      register: _wrap
+      delegate_to: "{{ openbao_init_bootstrap_host }}"
+      run_once: true
+      no_log: true
+      check_mode: false
+
+    - name: Afficher les credentials admin-bootstrap (à conserver IMMÉDIATEMENT)
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════════════════════════"
+          - "🔑 AppRole admin-bootstrap créé."
+          - "À conserver dans le KeePass du lead opérateur :"
+          - "  ROLE_ID    : {{ _role_id.json.data.role_id }}"
+          - "  WRAP_TOKEN : {{ _wrap.json.wrap_info.token }}"
+          - "  TTL wrap   : {{ wrap_ttl }} (à unwrap AVANT expiration !)"
+          - ""
+          - "Côté opérateur :"
+          - "  bao unwrap {{ _wrap.json.wrap_info.token }}"
+          - "  → renvoie le secret_id (à conserver)"
+          - "  bao write auth/approle/login \\"
+          - "    role_id={{ _role_id.json.data.role_id }} \\"
+          - "    secret_id=<secret_id_du_unwrap>"
+          - "  → renvoie un token admin (ttl 1h)"
+          - "════════════════════════════════════════════════════════════"
+      run_once: true
+
+    - name: Confirmation interactive avant révocation
+      ansible.builtin.pause:
+        prompt: |
+
+          ⚠️ Le root token va maintenant être révoqué.
+          Avant de continuer :
+            - Le wrap_token ci-dessus a-t-il été noté/transmis ?
+            - L'opérateur a-t-il pu unwrap + se connecter avec succès ?
+
+          Taper ENTER pour révoquer. Ctrl+C pour annuler.
+      run_once: true
+      delegate_to: localhost
+
+    - name: Révoquer le root token (irréversible)
+      ansible.builtin.uri:
+        url: "{{ openbao_api_url }}/v1/auth/token/revoke-self"
+        method: POST
+        headers:
+          X-Vault-Token: "{{ openbao_root_token }}"
+        validate_certs: true
+        ca_path: "{{ openbao_tls_dir }}/ca.crt"
+        status_code: [200, 204]
+      delegate_to: "{{ openbao_init_bootstrap_host }}"
+      run_once: true
+      no_log: true
+      check_mode: false
+      changed_when: true
+
+    - name: Mettre à jour init.vault.yml — retirer openbao_root_token
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          TMP=$(mktemp)
+          ansible-vault decrypt --output - {{ inventory_dir }}/group_vars/all/init.vault.yml \
+            | sed '/^openbao_root_token:/d' \
+            | sed '/^# Root token/d' \
+            > "$TMP"
+          ansible-vault encrypt --output {{ inventory_dir }}/group_vars/all/init.vault.yml "$TMP"
+          shred -u "$TMP"
+      delegate_to: localhost
+      run_once: true
+      no_log: true
+      changed_when: true
+
+    - name: Résumé final
+      ansible.builtin.debug:
+        msg:
+          - "✅ Root token révoqué et retiré de init.vault.yml"
+          - "✅ Tous les accès admin futurs passent par l'AppRole admin-bootstrap"
+          - "📌 Pour rejouer configure.yml ou autre, utiliser le token admin"
+          - "   obtenu via le secret_id wrap (cf. RUNBOOK §1bis.9)."
+      run_once: true

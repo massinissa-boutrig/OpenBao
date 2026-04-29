@@ -1,0 +1,3 @@
+---
+- name: Converge — pipeline complet site → init → configure
+  ansible.builtin.import_playbook: ../../playbooks/site.yml

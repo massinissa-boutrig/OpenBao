@@ -17,3 +17,8 @@
   ansible.builtin.systemd:
     name: nftables
     state: reloaded
+
+- name: restart rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted

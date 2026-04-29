@@ -1,0 +1,138 @@
+---
+- name: Verify — état du cluster HA 3 nœuds
+  hosts: openbao
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Tous les nœuds OpenBao sont actifs
+      ansible.builtin.command: systemctl is-active openbao
+      register: _is_active
+      changed_when: false
+      failed_when: _is_active.stdout != "active"
+
+    - name: Tous les nœuds répondent sur 8200
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:8200/v1/sys/health"
+        validate_certs: false   # PKI molecule auto-générée, on skip
+        status_code: [200, 429]
+
+- name: Verify — état Raft (depuis bootstrap)
+  hosts: bao-node-1
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Lire init.vault.yml pour récupérer le root token
+      ansible.builtin.slurp:
+        src: /tmp/init.vault.yml
+      register: _init_file
+      delegate_to: localhost
+      become: false
+
+    - name: Décrypter init.vault.yml
+      ansible.builtin.command:
+        cmd: >-
+          ansible-vault view --vault-password-file /tmp/vault.pass
+          /tmp/init.vault.yml
+      register: _init_decrypted
+      delegate_to: localhost
+      become: false
+      no_log: true
+      changed_when: false
+
+    - name: Parser le root token
+      ansible.builtin.set_fact:
+        _root_token: "{{ (_init_decrypted.stdout | from_yaml).openbao_root_token }}"
+      no_log: true
+
+    - name: raft list-peers retourne 3 voters
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:8200/v1/sys/storage/raft/configuration"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ _root_token }}"
+        validate_certs: false
+        status_code: 200
+        return_content: true
+      register: _raft_config
+      no_log: true
+
+    - name: Vérifier 3 voters Raft
+      ansible.builtin.assert:
+        that:
+          - _raft_config.json.data.config.servers | length == 3
+          - _raft_config.json.data.config.servers
+              | selectattr('voter', 'equalto', true)
+              | list | length == 3
+        fail_msg: "Cluster Raft incomplet : {{ _raft_config.json.data.config.servers }}"
+        success_msg: "✅ Cluster Raft 3 voters OK"
+
+    - name: Policies admin/auditor/secrets-rw-test-projet déployées
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:8200/v1/sys/policies/acl"
+        method: LIST
+        headers:
+          X-Vault-Token: "{{ _root_token }}"
+        validate_certs: false
+        status_code: 200
+        return_content: true
+      register: _policies
+      no_log: true
+
+    - name: Vérifier présence des policies
+      ansible.builtin.assert:
+        that:
+          - "'admin' in _policies.json.data.keys"
+          - "'auditor' in _policies.json.data.keys"
+          - "'secrets-rw-test-projet' in _policies.json.data.keys"
+          - "'secrets-ro-test-projet' in _policies.json.data.keys"
+        success_msg: "✅ Policies déployées"
+
+    - name: Mount kv-test-projet/ existe en KV v2
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:8200/v1/sys/mounts"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ _root_token }}"
+        validate_certs: false
+        status_code: 200
+        return_content: true
+      register: _mounts
+      no_log: true
+
+    - name: Vérifier kv-test-projet/ avec version 2
+      ansible.builtin.assert:
+        that:
+          - "'kv-test-projet/' in _mounts.json"
+          - _mounts.json["kv-test-projet/"].options.version == "2"
+        success_msg: "✅ Mount KV v2 créé"
+
+    - name: Audit devices file + syslog actifs
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:8200/v1/sys/audit"
+        method: GET
+        headers:
+          X-Vault-Token: "{{ _root_token }}"
+        validate_certs: false
+        status_code: 200
+        return_content: true
+      register: _audit
+      no_log: true
+
+    - name: Vérifier audit devices
+      ansible.builtin.assert:
+        that:
+          - "'file/' in _audit.json"
+          - "'syslog/' in _audit.json"
+        success_msg: "✅ Audit log file + syslog actifs"
+
+    - name: Résumé final
+      ansible.builtin.debug:
+        msg:
+          - "════════════════════════════════════════"
+          - "✅ Cluster Raft 3 voters opérationnel"
+          - "✅ 4 policies déployées"
+          - "✅ Mount KV v2 test-projet/ en place"
+          - "✅ Audit log file + syslog actifs"
+          - "════════════════════════════════════════"

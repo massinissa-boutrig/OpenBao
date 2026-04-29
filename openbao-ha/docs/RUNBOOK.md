@@ -289,6 +289,157 @@ bao policy delete secrets-rw-<ancien-projet>
 bao policy delete secrets-ro-<ancien-projet>
 ```
 
+### 1bis.7 Audit log : vérification
+
+Après le `configure`, deux audit devices sont actifs : `file/` (`/var/log/openbao/audit.log`) et `syslog/` (facility AUTH, tag openbao). Vérifier :
+
+```bash
+bao audit list
+# Doit lister "file/" et "syslog/"
+
+# Forcer une opération auditée pour test
+bao kv list kv-projet-a/
+tail -1 /var/log/openbao/audit.log | jq .
+# → ligne JSON avec request.path, auth.entity_id, time, etc.
+
+journalctl -t openbao --since "1 minute ago" | head
+# → mêmes événements via syslog
+```
+
+Si le fichier audit reste vide alors que des opérations ont lieu : OpenBao bloque toutes les requêtes si AUCUN audit device n'est joignable (politique de sécurité). Vérifier les permissions `/var/log/openbao/` (owner openbao, mode 0750).
+
+### 1bis.8 MFA TOTP : enrôlement utilisateur
+
+> **À faire AVANT d'activer `openbao_mfa_enabled=true` en production.** Sinon les utilisateurs déjà créés ne pourront plus se connecter (login enforcement actif → exige TOTP, mais aucun user n'a de TOTP enrôlé).
+
+Procédure d'enrôlement par utilisateur :
+
+**Étape 1 — Activer le MFA en pré-prod ou avec 1 user pilote**
+
+Dans `group_vars/all/main.yml` :
+```yaml
+openbao_mfa_enabled: true
+```
+
+Replay : `ansible-playbook playbooks/configure.yml --ask-vault-pass`.
+
+**Étape 2 — Récupérer l'entity_id de l'utilisateur**
+
+```bash
+# Login admin (avant l'activation MFA, ou via root token)
+bao login -method=token
+
+# Trouver l'entity_id (créé automatiquement au 1er login userpass)
+bao read -format=json identity/entity/name/<username> | jq -r .data.id
+# → ex : 8d2a1c7f-3e91-4e5a-9b1c-1a2b3c4d5e6f
+```
+
+Si l'utilisateur n'a jamais loggé : créer l'entité manuellement :
+```bash
+bao write identity/entity name=<username> policies=secrets-rw-projet-a
+ENTITY_ID=$(bao read -format=json identity/entity/name/<username> | jq -r .data.id)
+
+# Lier l'entité à l'alias userpass (sinon les login userpass ne matchent pas)
+USERPASS_ACCESSOR=$(bao auth list -format=json | jq -r '.["userpass/"].accessor')
+bao write identity/entity-alias \
+  name=<username> \
+  canonical_id=$ENTITY_ID \
+  mount_accessor=$USERPASS_ACCESSOR
+```
+
+**Étape 3 — Récupérer le method_id TOTP**
+
+```bash
+METHOD_ID=$(bao list -format=json identity/mfa/method/totp | jq -r '.[0]')
+# → ex : a1b2c3d4-...
+```
+
+**Étape 4 — Générer le secret TOTP pour cet utilisateur**
+
+```bash
+bao write -force identity/mfa/method/totp/admin-generate \
+  method_id=$METHOD_ID \
+  entity_id=$ENTITY_ID
+```
+
+Sortie :
+```
+Key      Value
+---      -----
+barcode  iVBORw0KGgo...   # PNG base64 du QR code
+url      otpauth://totp/OpenBao:<username>?secret=...&issuer=OpenBao
+```
+
+**Étape 5 — L'utilisateur scanne le QR code**
+
+Décoder et afficher le QR :
+```bash
+bao write -format=json -force identity/mfa/method/totp/admin-generate \
+  method_id=$METHOD_ID entity_id=$ENTITY_ID \
+  | jq -r .data.barcode | base64 -d > /tmp/qr-<username>.png
+# → transmettre /tmp/qr-<username>.png à l'utilisateur, qui le scanne avec
+#   Google Authenticator / Authy / Yubico Authenticator / 1Password.
+# → SUPPRIMER le fichier après confirmation : shred -u /tmp/qr-<username>.png
+```
+
+Alternative plus sécurisée — l'utilisateur scanne directement sur sa machine (avec port forward SSH) :
+```bash
+# Côté utilisateur, sur sa machine :
+ssh -L 8200:127.0.0.1:8200 bao-node-1
+# Puis dans son navigateur, ouvrir https://127.0.0.1:8200 → UI OpenBao,
+# section "Multi-factor Authentication", suivre l'enrôlement guidé.
+```
+
+**Étape 6 — Tester le login avec TOTP**
+
+```bash
+# Sur n'importe quelle machine :
+bao login -method=userpass username=<username>
+# → demande le password (saisie classique)
+# → demande ensuite le passcode TOTP (6 chiffres de l'authenticator)
+```
+
+Si OK : login réussi. Si échec : vérifier que la date système des nœuds OpenBao est synchronisée (NTP) — un décalage >30s casse le TOTP.
+
+**Étape 7 — Activer en production**
+
+Une fois TOUS les utilisateurs enrôlés et testés, déployer `openbao_mfa_enabled: true` sur l'inventaire prod et replay du configure.
+
+> **Sortie de secours** : si un utilisateur perd son authenticator (téléphone cassé, vol), un admin peut effacer son enrôlement via `bao delete identity/mfa/method/totp/admin-destroy method_id=<id> entity_id=<id>`, puis réenrôler. Ne JAMAIS désactiver globalement le MFA pour résoudre ça.
+
+### 1bis.9 Révocation du root token
+
+> **À faire après le 1er run de configure**, dès que tout fonctionne. Le root token est all-powerful et n'expire jamais — sa simple existence est un risque permanent.
+
+Procédure automatisée :
+
+```bash
+ansible-playbook playbooks/bootstrap-revoke-root.yml --ask-vault-pass
+```
+
+Le playbook :
+1. Crée l'AppRole `admin-bootstrap` avec policy `admin` (full sauf seal/init).
+2. Affiche le `role_id` + un `wrap_token` (ttl 5 min) — à conserver IMMÉDIATEMENT dans le KeePass du lead opérateur.
+3. Demande confirmation interactive (l'opérateur doit avoir pu unwrap et se connecter avant de continuer).
+4. Révoque le root token via `auth/token/revoke-self`.
+5. Met à jour `init.vault.yml` pour retirer la variable `openbao_root_token`.
+
+**Après révocation** : tous les playbooks qui utilisaient `openbao_root_token` doivent passer par l'AppRole `admin-bootstrap`. Login type :
+
+```bash
+# Sur le poste de l'opérateur, après unwrap initial
+SECRET_ID=<obtenu via bao unwrap du wrap_token>
+bao write -format=json auth/approle/login \
+  role_id=<role_id_admin_bootstrap> \
+  secret_id=$SECRET_ID \
+  | jq -r .auth.client_token > ~/.openbao-admin-token
+
+export VAULT_TOKEN=$(cat ~/.openbao-admin-token)
+bao token lookup-self    # vérification
+```
+
+Pour rejouer `configure.yml` après révocation : passer le token admin en `--extra-vars openbao_root_token=$VAULT_TOKEN` (le nom de la variable reste mais son contenu est désormais un token AppRole, pas root).
+
 ---
 
 ## 2. Unseal après reboot
@@ -353,6 +504,88 @@ Le playbook `playbooks/backup.yml` :
 | Stockage externe (S3/NFS) | 1 an |
 
 Nettoyage local automatisé via le même playbook (`find -mtime +30 -delete`).
+
+---
+
+## 3bis. Sauvegarde des fichiers du contrôleur Ansible
+
+> Le snapshot Raft (§3) couvre l'état d'OpenBao mais PAS les fichiers Ansible côté contrôleur. Si la machine du contrôleur est perdue (vol, panne, sinistre), on perd `init.vault.yml` (5 unseal keys + root token), `vault.yml` (passphrase CA + creds), et la PKI. **Aucun snapshot Raft ne peut être restauré sans ces fichiers**.
+
+### 3bis.1 Procédure
+
+```bash
+# Préparer la passphrase GPG (une seule fois — KeePass perso, pas avec ansible-vault)
+mkdir -p ~/.openbao && chmod 0700 ~/.openbao
+echo 'passphrase_GPG_forte_32_chars_minimum' > ~/.openbao/backup.pass
+chmod 0400 ~/.openbao/backup.pass
+
+# Lancer la sauvegarde
+ansible-playbook playbooks/backup-controller.yml
+
+# Sortie : ~/openbao-controller-backups/openbao-ctrl-YYYYMMDDTHHMMSSZ.tar.gz.gpg
+```
+
+Le playbook :
+- archive `init.vault.yml`, `vault.yml`, `pki/`,
+- chiffre en AES256 symétrique GPG,
+- shred l'archive en clair,
+- calcule SHA256 pour vérification d'intégrité,
+- fait tourner les fichiers >30 jours.
+
+### 3bis.2 Synchroniser vers stockage externe
+
+**Indispensable** : le playbook ne fait que créer le fichier chiffré localement. La synchronisation hors machine doit être faite séparément (volontaire — on ne veut pas que la passphrase de chiffrement ou un token cloud transite par Ansible).
+
+Exemples :
+
+```bash
+# Vers un NAS via rsync (mTLS recommandé)
+rsync -av --remove-source-files \
+  ~/openbao-controller-backups/openbao-ctrl-*.tar.gz.gpg \
+  backup-nas:/srv/openbao/
+
+# Vers S3-compatible
+aws s3 cp ~/openbao-controller-backups/openbao-ctrl-*.tar.gz.gpg \
+  s3://openbao-backup-bucket/ --sse AES256
+
+# Vers USB hardware-encrypted (Yubikey, IronKey)
+cp ~/openbao-controller-backups/openbao-ctrl-*.tar.gz.gpg /media/usb-secure/
+```
+
+À automatiser via cron OS du contrôleur (pas Ansible) :
+
+```cron
+# /etc/cron.d/openbao-backup-sync
+0 3 * * * massi rsync -av --remove-source-files /home/massi/openbao-controller-backups/*.tar.gz.gpg backup-nas:/srv/openbao/
+```
+
+### 3bis.3 Restauration
+
+Sur n'importe quelle machine équipée d'`ansible` + `gpg` :
+
+```bash
+# Récupérer le fichier .tar.gz.gpg depuis le stockage externe
+# Vérifier intégrité
+sha256sum -c openbao-ctrl-YYYYMMDDTHHMMSSZ.tar.gz.gpg.sha256
+
+# Déchiffrer + extraire
+gpg --decrypt --passphrase-file ~/.openbao/backup.pass \
+  openbao-ctrl-YYYYMMDDTHHMMSSZ.tar.gz.gpg | tar -xzf -
+# → restaure inventories/.../init.vault.yml + vault.yml + pki/
+
+# Vérifier que ansible-vault peut déchiffrer init.vault.yml
+ansible-vault view inventories/production/group_vars/all/init.vault.yml
+```
+
+### 3bis.4 Politique de rétention
+
+| Emplacement | Rétention | Fréquence |
+|---|---|---|
+| Local contrôleur | 30 jours | quotidien |
+| NAS / S3 | 1 an | quotidien |
+| USB hardware (offline) | 5 ans | mensuel |
+
+La passphrase GPG est conservée par 2 personnes habilitées dans 2 KeePass distincts (rotation tous les 6 mois). Sans elle, les sauvegardes sont inutilisables.
 
 ---
 
@@ -550,3 +783,60 @@ journalctl -u openbao-fip-failover.service -n 50
 **« HAProxy report tous les backends DOWN alors que les nœuds sont up »** : la CA interne n'est pas dans `/etc/haproxy/ca.crt`, ou nftables bloque la sortie HAProxy → OpenBao. Tester avec `openssl s_client -CAfile /etc/haproxy/ca.crt -connect bao-node-1:8200` puis `journalctl -u nftables` et `nft list ruleset`.
 
 **« Un opérateur a perdu sa clé Shamir »** : avec un seuil 5/3, on peut perdre **2 clés sur 5** sans incident. Au-delà, **regénération des unseal keys obligatoire** via `bao operator rekey -init -key-shares=5 -key-threshold=3` et nouvelle cérémonie.
+
+
+---
+
+## 9. Observabilité (Prometheus + alertes)
+
+> Le rôle `openbao` expose nativement les métriques Prometheus sur `/v1/sys/metrics?format=prometheus`. Côté HAProxy, le port stats `8404` expose `/metrics`. Le projet fournit deux fichiers prêts à intégrer dans la stack supervision.
+
+### 9.1 Configuration scrape Prometheus
+
+Fichier `monitoring/prometheus-scrape.yml.j2` à intégrer dans le `prometheus.yml` du serveur de monitoring (sous `scrape_configs:`). Pré-requis :
+
+```bash
+# Créer un token avec policy auditor (lecture sys/metrics + sys/health)
+bao login -method=token
+bao token create -policy=auditor -orphan -ttl=8760h -format=json \
+  | jq -r .auth.client_token > /etc/prometheus/openbao-auditor.token
+chmod 600 /etc/prometheus/openbao-auditor.token
+
+# Copier la CA interne pour valider le TLS OpenBao
+cp /etc/openbao/tls/ca.crt /etc/prometheus/openbao-ca.crt
+```
+
+### 9.2 Règles dalerte
+
+Fichier `monitoring/alerts.yml` (10 règles). Couvre :
+
+| Alerte | Sévérité | Délai |
+|---|---|---|
+| `OpenBaoSealed` | critical | 1m |
+| `OpenBaoLeaderLost` | critical | 30s |
+| `OpenBaoLeaderFlapping` | warning | 5m |
+| `OpenBaoMfaFailureSpike` | warning | 5m |
+| `OpenBaoAuditLogWriteFailure` | critical | 1m |
+| `OpenBaoRaftSnapshotStale` | warning | 30m (>7h) |
+| `OpenBaoCertExpiringSoon` | warning | <14j |
+| `OpenBaoTokenStoreFull` | warning | >50k |
+| `HAProxyBackendDown` | critical | 1m |
+| `FloatingIPNotMigrated` | critical | 2m |
+
+À intégrer dans Prometheus :
+
+```yaml
+# /etc/prometheus/prometheus.yml
+rule_files:
+  - rules/openbao.yml
+```
+
+Puis : `cp monitoring/alerts.yml /etc/prometheus/rules/openbao.yml && systemctl reload prometheus`.
+
+### 9.3 Dashboards Grafana
+
+À récupérer (non fournis dans ce repo, hors scope) :
+- HashiCorp Vault Cluster Overview (compatible OpenBao)
+- HAProxy 2.x stats
+- Node Exporter pour les métriques système des 5 VMs
+

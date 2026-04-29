@@ -1,0 +1,119 @@
+---
+# ============================================================
+# Rotation automatique des certificats PKI internes.
+# ============================================================
+#
+# Vérifie chaque cert hôte (server.crt, raft.crt si distinct) et
+# le ré-émet s'il expire dans moins de openbao_pki_renew_threshold_days
+# (défaut 30 jours). Redémarre le service OpenBao après rotation.
+#
+# Idempotent : ne fait rien si tous les certs sont valides >30j.
+#
+# Usage manuel :
+#   ansible-playbook playbooks/pki-rotate.yml --ask-vault-pass
+#
+# Usage automatique : timer systemd quotidien sur le contrôleur :
+#   /etc/systemd/system/openbao-pki-rotate.timer
+#   /etc/systemd/system/openbao-pki-rotate.service
+#   → wrapper bash qui appelle ce playbook avec ANSIBLE_VAULT_PASSWORD_FILE
+#
+# Pré-requis :
+#   - openssl installé sur les nœuds OpenBao (vérifier les certs)
+#   - playbooks/pki.yml fonctionnel (ré-émission)
+# ============================================================
+- name: Vérifier l'expiration des certs PKI internes
+  hosts: openbao
+  become: true
+  gather_facts: true
+  vars:
+    openbao_pki_renew_threshold_days: 30
+  tasks:
+
+    - name: Récupérer la date d'expiration de server.crt
+      ansible.builtin.command:
+        cmd: >-
+          openssl x509 -enddate -noout -in {{ openbao_tls_dir }}/server.crt
+      register: _server_cert_enddate
+      changed_when: false
+
+    - name: Calculer le nombre de jours avant expiration
+      ansible.builtin.set_fact:
+        _server_cert_days_left: >-
+          {{
+            ((_server_cert_enddate.stdout | regex_replace('^notAfter=', ''))
+             | to_datetime('%b %d %H:%M:%S %Y %Z')
+             - ('%Y-%m-%d %H:%M:%S' | strftime(ansible_date_time.epoch))
+             | to_datetime('%Y-%m-%d %H:%M:%S')).days
+          }}
+
+    - name: Marquer le nœud comme à renouveler
+      ansible.builtin.set_fact:
+        _needs_rotation: >-
+          {{ _server_cert_days_left | int < openbao_pki_renew_threshold_days }}
+
+    - name: Afficher l'état des certs
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} : server.crt expire dans
+          {{ _server_cert_days_left }} jours
+          {% if _needs_rotation %}→ ROTATION REQUISE{% else %}→ ok{% endif %}
+
+- name: Rotation des certs sur les nœuds qui en ont besoin
+  hosts: openbao
+  become: true
+  gather_facts: false
+  tasks:
+
+    - name: Skip si aucune rotation nécessaire
+      ansible.builtin.meta: end_host
+      when: not _needs_rotation | default(false) | bool
+
+    - name: Sauvegarder l'ancien certificat
+      ansible.builtin.copy:
+        src: "{{ openbao_tls_dir }}/{{ item }}"
+        dest: "{{ openbao_tls_dir }}/{{ item }}.bak-{{ ansible_date_time.iso8601_basic_short }}"
+        remote_src: true
+        mode: preserve
+      loop:
+        - server.crt
+        - server.key
+
+    - name: Ré-émettre le certificat hôte (via tâches du rôle openbao)
+      ansible.builtin.import_role:
+        name: openbao
+        tasks_from: tls.yml
+
+    - name: Redémarrer OpenBao (service repart en SEALED)
+      ansible.builtin.systemd:
+        name: openbao
+        state: restarted
+
+- name: Auto-unseal après rotation (si activé)
+  hosts: openbao
+  become: true
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: Skip si nœud non concerné par rotation
+      ansible.builtin.meta: end_host
+      when: not _needs_rotation | default(false) | bool
+
+    - name: Importer les tâches d'unseal
+      ansible.builtin.import_role:
+        name: openbao
+        tasks_from: unseal.yml
+      when: openbao_auto_unseal_enabled | default(false) | bool
+
+- name: Bilan
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Résumé rotation PKI
+      ansible.builtin.debug:
+        msg: >-
+          Rotation PKI terminée.
+          Nœuds concernés : {{ groups['openbao']
+                                | select('extract', hostvars, '_needs_rotation')
+                                | list }}
+          ⚠️ Si auto-unseal désactivé : unseal manuel requis (3 opérateurs).
