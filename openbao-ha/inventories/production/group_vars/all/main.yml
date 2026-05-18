@@ -53,13 +53,15 @@ openbao_tls_cipher_suites:
   - "TLS_CHACHA20_POLY1305_SHA256"
   - "TLS_AES_128_GCM_SHA256"
 
-# --- VIP / DNS HAProxy ---
-# FQDN de la VIP frontale (VIP keepalived unique, mono-DC OpenStack).
+# --- VIP / DNS frontal ---
+# FQDN exposé aux clients, résout vers la Floating IP associée au LB Octavia.
 openbao_vip_fqdn: "vip-bao.{{ internal_domain }}"
 
-# --- HAProxy : sources autorisées pour les stats (supervision) ---
-haproxy_stats_allowed_sources:
-  - 10.20.0.0/16     # adapter à votre subnet supervision
+# --- Octavia (LBaaS) ---
+# CIDR du subnet où Octavia spawn ses amphorae. Utilisé par nftables sur les
+# nœuds OpenBao pour restreindre l'accès au port 8200 au seul trafic du LB.
+# À aligner avec le subnet passé en vip_subnet_id dans terraform/octavia-lb.
+octavia_lb_subnet_cidr: "10.10.0.0/24"
 
 # --- Backup ---
 openbao_backup_dir: /var/backups/openbao

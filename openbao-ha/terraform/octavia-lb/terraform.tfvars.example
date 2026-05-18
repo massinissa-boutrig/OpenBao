@@ -1,0 +1,39 @@
+# ============================================================
+# Exemple de tfvars pour le module octavia-lb.
+# Copier en terraform.tfvars (gitignored) et adapter les valeurs.
+# ============================================================
+
+# Cloud dans ~/.config/openstack/clouds.yaml (ou OS_CLIENT_CONFIG_FILE).
+openstack_cloud = "openbao"
+
+# Nom logique du LB (visible dans `openstack loadbalancer list`).
+lb_name = "openbao-prod-lb"
+
+# Flavor Octavia ACTIVE_STANDBY. Lister avec :
+#   openstack loadbalancer flavor list
+# Si laissé à null, c'est la flavor par défaut du tenant qui est utilisée —
+# vérifier explicitement qu'elle est bien ACTIVE_STANDBY (pas SINGLE).
+lb_flavor_id = null  # ex. "8a9c2f1b-..."
+
+# Subnets Neutron.
+#   vip_subnet_id     : où Octavia pose la VIP (souvent un subnet d'amphorae dédié)
+#   members_subnet_id : où vivent les 3 VMs OpenBao
+vip_subnet_id     = "REPLACE_WITH_VIP_SUBNET_UUID"
+members_subnet_id = "REPLACE_WITH_OPENBAO_SUBNET_UUID"
+
+# Optionnel : imposer l'IP de la VIP interne (sinon Neutron la choisit).
+# vip_address = "10.10.0.50"
+
+# Les 3 nœuds OpenBao tels que dans inventories/production/hosts.yml.
+openbao_nodes = [
+  { name = "bao-node-1", address = "10.10.0.10" },
+  { name = "bao-node-2", address = "10.10.0.11" },
+  { name = "bao-node-3", address = "10.10.0.12" },
+]
+
+# Floating IP préallouée (référencée dans le DNS vip-bao.intra).
+# C'est la même que openstack_floating_ip dans le vault Ansible.
+floating_ip_address = "10.10.0.100"
+
+# Tags Octavia.
+tags = ["openbao", "prod", "ha", "managed-by-terraform"]

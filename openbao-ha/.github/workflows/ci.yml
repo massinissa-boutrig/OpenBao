@@ -61,7 +61,6 @@ jobs:
           - init.yml
           - configure.yml
           - approle-secret-id.yml
-          - fip-failover-test.yml
     steps:
       - uses: actions/checkout@v4
 

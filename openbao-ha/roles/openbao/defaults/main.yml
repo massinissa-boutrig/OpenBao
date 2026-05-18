@@ -147,7 +147,7 @@ openbao_mfa_enforcements:
 # ============================================================
 # Forwarder rsyslog vers SIEM externe (TCP+TLS)
 # ============================================================
-# Activer pour pousser les logs audit OpenBao + sshd + HAProxy vers
+# Activer pour pousser les logs audit OpenBao + sshd vers
 # un SIEM (Splunk, Graylog, Elastic, Wazuh). Tracé externe = exigence
 # DORA / NIS2 / ISO 27001.
 openbao_siem_enabled: false

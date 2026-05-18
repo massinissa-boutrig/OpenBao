@@ -26,8 +26,10 @@ table inet filter {
         # SSH (ne pas se couper l'accès)
         tcp dport 22 accept
 
-        # API OpenBao : 8200/tcp ouvert à tout le monde
-        tcp dport {{ openbao_api_port }} accept
+        # API OpenBao : 8200/tcp restreint au subnet des amphorae Octavia
+        # (le LB est le seul à devoir parler aux nœuds en 8200). Adapter
+        # octavia_lb_subnet_cidr dans group_vars/all/main.yml.
+        ip saddr {{ octavia_lb_subnet_cidr }} tcp dport {{ openbao_api_port }} accept
 
         # Cluster Raft : 8201/tcp restreint aux IPs des autres pairs OpenBao
 {% for host in groups['openbao'] %}

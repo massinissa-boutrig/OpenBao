@@ -45,67 +45,68 @@ for i in 1 2 3; do
 done
 ```
 
-Les 2 HAProxy peuvent être dans 2 AZ différentes (idéalement az-1 et az-2) sans ServerGroup strict.
+Le frontal n'est plus une paire de VMs HAProxy mais un **load balancer Octavia (LBaaS OpenStack)** en topologie `ACTIVE_STANDBY`, provisionné par Terraform — voir `terraform/octavia-lb/` et `docs/PLAN-MIGRATION-OCTAVIA.md`. Les amphorae Octavia sont managées par le service OpenStack, pas par Ansible.
 
 ### 0.2 Security groups
 
 | Security group | Ingress | Source | Justification |
 |---|---|---|---|
 | `openbao-nodes` | TCP 22 | bastion | SSH admin |
-| `openbao-nodes` | TCP 8200 | `haproxy-frontends` | API OpenBao |
+| `openbao-nodes` | TCP 8200 | subnet d'amphorae Octavia (`octavia_lb_subnet_cidr`) | API OpenBao consommée par le LB |
 | `openbao-nodes` | TCP 8201 | `openbao-nodes` | Réplication Raft (mTLS) |
-| `haproxy-frontends` | TCP 22 | bastion | SSH admin |
-| `haproxy-frontends` | TCP 8200 | subnet clients | Frontend Floating IP |
-| `haproxy-frontends` | TCP 8404 | subnet supervision | Page stats HAProxy |
 
-Plus aucune règle VRRP / protocole 112 : la bascule frontale est portée par l'API Neutron, pas par VRRP. L'egress doit autoriser HTTPS (443) sortant vers les endpoints Keystone et Neutron depuis `haproxy-frontends`. nftables applique un second filtre local plus strict (policy drop).
+Plus de security group `haproxy-frontends` — les amphorae Octavia ont leur propre security group géré par le service. Octavia s'occupe de l'ouverture `8200/tcp` côté FIP (clients) et de la connectivité vers les nœuds. nftables applique un second filtre local plus strict (policy drop) sur les nœuds OpenBao.
 
 ### 0.3 Floating IP Neutron préallouée
 
-L'architecture utilise une **Floating IP OpenStack** réattachée entre les deux HAProxy via appel API Neutron (plus de VRRP, plus d'`allowed-address-pairs`). Il faut donc préallouer cette FIP sur un réseau externe et récupérer son UUID pour l'injecter dans `openstack_floating_ip_id` (vault).
+L'architecture utilise une **Floating IP OpenStack** statiquement associée au port VIP du LB Octavia (plus de bascule applicative, c'est Octavia qui porte la HA via VRRP entre amphorae). Préallouer cette FIP sur un réseau externe avant l'apply Terraform.
 
 ```bash
 # Création de la FIP (une seule fois)
-openstack floating ip create public --description "OpenBao HA frontend" -f value -c floating_ip_address -c id
-# → retenir l'adresse (ex : 10.10.0.100) ET l'UUID
-
-# L'attacher initialement au port de ha-1 pour démarrer sur le master
-PORT_HA1=$(openstack port list --server ha-1 -f value -c ID)
-openstack floating ip set --port $PORT_HA1 <fip_uuid>
+openstack floating ip create public --description "OpenBao HA frontend" \
+  -f value -c floating_ip_address -c id
+# → retenir l'adresse (ex : 10.10.0.100) — c'est elle qu'on passe en
+#   floating_ip_address dans terraform/octavia-lb/terraform.tfvars.
 ```
 
-Renseigner ensuite `openstack_floating_ip: 10.10.0.100` dans `hosts.yml` et `openstack_floating_ip_id: <uuid>` dans le vault. Le script `openbao-fip-failover.py` (rôle `openstack_fip`) prend ensuite le relais.
+L'association FIP → port VIP du LB est faite par Terraform (`openstack_networking_floatingip_associate_v2`). Pas de réattachement manuel à prévoir : la FIP reste sur le port VIP, et c'est le VRRP entre amphorae qui bascule la VIP entre l'active et le standby.
 
-### 0.6 Compte Keystone restreint pour le failover de FIP
+### 0.4 Flavor Octavia ACTIVE_STANDBY
 
-Le rôle `openstack_fip` déploie un script qui appelle Neutron pour réattacher la Floating IP. Ce compte doit avoir **le strict minimum de privilèges** : `update_floatingip` + `get_floatingip` sur la FIP cible et `get_port` sur les ports HAProxy. Rien de plus.
+Vérifier qu'une flavor Octavia avec `loadbalancer_topology = ACTIVE_STANDBY` est disponible sur le tenant :
 
 ```bash
-# Rôle Keystone dédié (à créer une fois)
-openstack role create openbao-fip-failover
-openstack user create --project <project> --password <mdp> openbao-fip-failover
-openstack role add --project <project> --user openbao-fip-failover openbao-fip-failover
+openstack loadbalancer flavor list
+openstack loadbalancer flavorprofile show <flavor_profile_id>
+# → vérifier "loadbalancer_topology": "ACTIVE_STANDBY"
 ```
 
-Merger dans `/etc/neutron/policy.yaml` :
+Si la flavor par défaut est `SINGLE`, demander à l'équipe OpenStack de créer une flavor ACTIVE_STANDBY (opération admin) et passer son UUID en `lb_flavor_id` dans le tfvars. Sans ACTIVE_STANDBY, la bascule du LB devient une recréation d'amphora (plusieurs minutes).
 
-```yaml
-"role:openbao-fip-failover and project_id:%(project_id)s":
-  - get_floatingip
-  - update_floatingip
-  - get_port
+### 0.5 Compte Keystone pour Terraform
+
+Le compte qui exécute `terraform apply` (référencé dans `clouds.yaml` sous le nom `openbao`) doit avoir au minimum :
+
+- `load-balancer_member` sur le projet (pour créer/modifier le LB Octavia)
+- `member` sur le projet (pour lire les subnets, ports et FIP)
+
+Pas besoin de droit admin Octavia (la flavor est consommée, pas créée).
+
+```bash
+openstack user create --project <project> --password <mdp> openbao-tf
+openstack role add --project <project> --user openbao-tf member
+openstack role add --project <project> --user openbao-tf load-balancer_member
 ```
 
-Vérification : depuis ha-1, `sudo -u openbao-fip ... floating ip show <uuid>` doit réussir, `... server list` doit échouer (Forbidden) — preuve que le compte est bien contraint. Rotation du mot de passe : tous les 6 mois minimum, via `openstack user set --password` puis replay du rôle.
+Plus de compte Keystone restreint `openbao-fip-failover` ni de `policy.yaml` Neutron à patcher — c'était spécifique à l'ancienne bascule de FIP par script.
 
-### 0.4 Flavor et stockage recommandés
+### 0.6 Flavor et stockage recommandés (VMs OpenBao)
 
 | Composant | vCPU | RAM | Disque | Volume Cinder |
 |---|---|---|---|---|
 | OpenBao | 2 | 4 Go | 20 Go (racine) | 20 Go ext4 pour `/var/lib/openbao` (Raft) |
-| HAProxy | 1 | 2 Go | 10 Go (racine) | — |
 
-Le volume Cinder sur les OpenBao est recommandé pour : (a) découpler le stockage Raft du disque racine, (b) permettre un snapshot Cinder à froid avant opération sensible, (c) faciliter la reprise sur défaillance d'hyperviseur (re-attach rapide).
+Plus de VMs HAProxy à provisionner — Octavia gère ses propres amphorae. Le volume Cinder sur les OpenBao est recommandé pour : (a) découpler le stockage Raft du disque racine, (b) permettre un snapshot Cinder à froid avant opération sensible, (c) faciliter la reprise sur défaillance d'hyperviseur (re-attach rapide).
 
 ### 0.5 Cloud-init minimal
 
@@ -729,8 +730,9 @@ ansible-playbook playbooks/site.yml --tags openbao,config --ask-vault-pass
 |---|---|
 | Service OpenBao | `journalctl -u openbao -f` |
 | Audit applicatif | `tail -f /var/log/openbao/audit.log` |
-| HAProxy | `journalctl -u haproxy -f` |
-| Failover FIP (service + timer) | `journalctl -u openbao-fip-failover.service -u openbao-fip-failover.timer -f` |
+| LB Octavia (état) | `openstack loadbalancer status show <lb_id>` |
+| LB Octavia (stats) | `openstack loadbalancer stats show <lb_id>` |
+| Amphorae | `openstack loadbalancer amphora list --loadbalancer <lb_id>` |
 
 ### 8.2 État du cluster
 
@@ -750,29 +752,54 @@ curl -k https://127.0.0.1:8200/v1/sys/health  # codes 200/429/472/473/501/503
 | 501 | Non initialisé |
 | 503 | Sealed |
 
-### 8.3 Santé HAProxy
+### 8.3 Santé du LB Octavia
 
-Page stats sur `https://<haproxy>:8404/stats` (auth `admin` / mot de passe vault). Vérifier la colonne `Status` : `UP` pour les nœuds disponibles, `DOWN` pour les sealed/down. La colonne `Cur` indique les sessions actives.
+```bash
+# Vue d'ensemble du LB et de tous ses membres
+openstack loadbalancer status show <lb_id>
+# → operating_status: ONLINE pour le LB
+# → operating_status: ONLINE pour chaque member
+# → si DEGRADED : un member est marqué ERROR/OFFLINE, voir pool
+
+# Stats temps réel
+openstack loadbalancer stats show <lb_id>
+
+# Liste des amphorae (active + standby)
+openstack loadbalancer amphora list --loadbalancer <lb_id>
+# → status: ALLOCATED pour les 2 amphorae actives
+# → role: MASTER / BACKUP (l'active porte la VIP)
+```
+
+Si un member apparaît `ERROR` alors que le nœud OpenBao répond bien :
+1. Vérifier le healthcheck depuis l'amphora elle-même (admin Octavia uniquement)
+2. Vérifier nftables sur le nœud OpenBao : `nft list ruleset | grep 8200` doit autoriser `octavia_lb_subnet_cidr`
+3. Vérifier que la CA OpenBao est cohérente : depuis un nœud, `curl -k https://<bao-node-N>:8200/v1/sys/health` doit retourner 200/429
 
 ### 8.4 Vérification de la Floating IP
 
 ```bash
-# Depuis n'importe quel HAProxy (le clouds.yaml y est déployé)
-sudo -u openbao-fip env OS_CLIENT_CONFIG_FILE=/etc/openstack/clouds.yaml \
-  openstack --os-cloud openbao_fip floating ip show <fip_uuid> -f table
-# → Champ port_id doit pointer vers le port du HAProxy sain
+# La FIP doit être associée au port VIP du LB
+openstack floating ip show <fip_address>
+# → port_id doit correspondre à vip_port_id du LB (cf. terraform output)
 
-# État persistant du script (streaks OK/KO)
-cat /var/lib/openbao-fip/health.json
-
-# Derniers cycles du timer
-systemctl list-timers openbao-fip-failover.timer
-journalctl -u openbao-fip-failover.service -n 50
+# Vérifier le mapping bout-en-bout
+LB_ID=$(cd terraform/octavia-lb && terraform output -raw lb_id)
+LB_VIP_PORT=$(cd terraform/octavia-lb && terraform output -raw lb_vip_port_id)
+FIP_PORT=$(openstack floating ip show $(cd terraform/octavia-lb && terraform output -raw floating_ip_address) -f value -c port_id)
+[ "$LB_VIP_PORT" = "$FIP_PORT" ] && echo "OK : FIP bien associée au LB" || echo "KO : désalignement"
 ```
 
-**Bascule manuelle** : `openstack --os-cloud openbao_fip floating ip set --port $(openstack port list --server <ha-X> -f value -c ID | head -1) <fip_uuid>`. Avec `fip_takeover_policy=preempt` et ha-1 sain, le script ramènera la FIP au tick suivant.
+**Réassociation manuelle d'urgence** (rollback express vers un ancien HAProxy si disponible) :
 
-**Causes fréquentes de non-bascule** : `403 Forbidden` (compte Keystone manque les droits, cf. §0.6) ; `NotFoundException` (UUID FIP incorrect dans le vault) ; `Connection refused /v1/sys/health` mais HAProxy actif (OpenBao sealed → 503 → considéré KO) ; streaks à 0 (le timer ne tourne pas, vérifier `systemctl status openbao-fip-failover.timer`).
+```bash
+# Récupérer le port d'un HAProxy de secours
+PORT_HA1=$(openstack port list --server ha-1 -f value -c ID)
+openstack floating ip set --port $PORT_HA1 <fip_uuid>
+# Note : Terraform considère cela comme une dérive et tentera de revenir
+# à l'association sur le port VIP du LB au prochain apply.
+```
+
+**Causes fréquentes d'indisponibilité du LB** : flavor par défaut tombée à `SINGLE` (vérifier `openstack loadbalancer show <lb_id>` → `flavor_id`) ; control plane Octavia indisponible (les amphorae continuent de servir mais on ne peut plus modifier le LB) ; les 3 nœuds OpenBao sealed simultanément (codes 503, tous les members passent OFFLINE).
 
 ### 8.5 Cas typiques
 
@@ -780,7 +807,7 @@ journalctl -u openbao-fip-failover.service -n 50
 
 **« retry_join boucle en erreur TLS »** : vérifier que le SAN du certificat du nœud cible inclut bien l'IP utilisée dans `cluster_addr` ET le FQDN. C'est le piège le plus fréquent.
 
-**« HAProxy report tous les backends DOWN alors que les nœuds sont up »** : la CA interne n'est pas dans `/etc/haproxy/ca.crt`, ou nftables bloque la sortie HAProxy → OpenBao. Tester avec `openssl s_client -CAfile /etc/haproxy/ca.crt -connect bao-node-1:8200` puis `journalctl -u nftables` et `nft list ruleset`.
+**« Octavia rapporte tous les members OFFLINE alors que les nœuds OpenBao répondent »** : presque toujours nftables qui bloque le trafic depuis le subnet d'amphorae. Vérifier `nft list ruleset` sur un nœud OpenBao — la règle `ip saddr <octavia_lb_subnet_cidr> tcp dport 8200 accept` doit être présente. Si la valeur de `octavia_lb_subnet_cidr` dans group_vars/all/main.yml ne correspond pas au subnet réel des amphorae, relancer `ansible-playbook playbooks/site.yml --tags firewall` après correction.
 
 **« Un opérateur a perdu sa clé Shamir »** : avec un seuil 5/3, on peut perdre **2 clés sur 5** sans incident. Au-delà, **regénération des unseal keys obligatoire** via `bao operator rekey -init -key-shares=5 -key-threshold=3` et nouvelle cérémonie.
 
@@ -789,7 +816,7 @@ journalctl -u openbao-fip-failover.service -n 50
 
 ## 9. Observabilité (Prometheus + alertes)
 
-> Le rôle `openbao` expose nativement les métriques Prometheus sur `/v1/sys/metrics?format=prometheus`. Côté HAProxy, le port stats `8404` expose `/metrics`. Le projet fournit deux fichiers prêts à intégrer dans la stack supervision.
+> Le rôle `openbao` expose nativement les métriques Prometheus sur `/v1/sys/metrics?format=prometheus`. Côté Octavia, les métriques LB sont disponibles via `openstack-exporter` (Prometheus exporter standard pour OpenStack, à déployer sur le serveur de monitoring — hors scope de ce projet). Le projet fournit le scrape OpenBao et les règles d'alerte cluster.
 
 ### 9.1 Configuration scrape Prometheus
 
@@ -820,8 +847,8 @@ Fichier `monitoring/alerts.yml` (10 règles). Couvre :
 | `OpenBaoRaftSnapshotStale` | warning | 30m (>7h) |
 | `OpenBaoCertExpiringSoon` | warning | <14j |
 | `OpenBaoTokenStoreFull` | warning | >50k |
-| `HAProxyBackendDown` | critical | 1m |
-| `FloatingIPNotMigrated` | critical | 2m |
+| `OctaviaLBOperatingStatusDegraded` | critical | 1m (via openstack-exporter) |
+| `OctaviaMemberOffline` | critical | 2m (via openstack-exporter) |
 
 À intégrer dans Prometheus :
 
@@ -837,6 +864,6 @@ Puis : `cp monitoring/alerts.yml /etc/prometheus/rules/openbao.yml && systemctl 
 
 À récupérer (non fournis dans ce repo, hors scope) :
 - HashiCorp Vault Cluster Overview (compatible OpenBao)
-- HAProxy 2.x stats
-- Node Exporter pour les métriques système des 5 VMs
+- OpenStack Octavia (via openstack-exporter) — état LB, members, amphorae
+- Node Exporter pour les métriques système des 3 VMs OpenBao
 

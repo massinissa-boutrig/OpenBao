@@ -2,9 +2,10 @@
 # Molecule scenario "default" — smoke test du rôle openbao
 # sur un container Debian 13 (Trixie).
 #
-# Lance le rôle (sans HAProxy ni Floating IP) en standalone, vérifie
-# que le service démarre et que le pré-flight passe. Pour un test HA
-# complet à 3 nœuds, utiliser un scénario dédié (à venir).
+# Lance le rôle en standalone, vérifie que le service démarre et que
+# le pré-flight passe. Pour un test HA complet à 3 nœuds, voir le
+# scénario molecule/cluster/. Le LB Octavia est testé séparément (le
+# module terraform/octavia-lb/ se valide par `terraform plan` en CI).
 
 dependency:
   name: galaxy

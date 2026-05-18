@@ -26,26 +26,17 @@ scrape_configs:
           service: openbao
           cluster: openbao-prod
 
-  - job_name: haproxy
+  # Métriques Octavia : fournies par openstack-exporter
+  # (https://github.com/openstack-exporter/openstack-exporter) à déployer
+  # côté serveur de monitoring avec des credentials Keystone lecture-seule.
+  # Le job ci-dessous suppose que l'exporter tourne sur monitoring.intra:9180.
+  - job_name: octavia
     metrics_path: /metrics
     scheme: http
-    scrape_interval: 30s
+    scrape_interval: 60s
     static_configs:
       - targets:
-          - ha-1.intra:8404
-          - ha-2.intra:8404
+          - monitoring.intra:9180
         labels:
-          service: haproxy
-          cluster: openbao-prod
-
-  - job_name: openbao_fip_failover
-    metrics_path: /metrics
-    scheme: http
-    scrape_interval: 30s
-    static_configs:
-      - targets:
-          - ha-1.intra:9101
-          - ha-2.intra:9101
-        labels:
-          service: fip-failover
+          service: octavia
           cluster: openbao-prod

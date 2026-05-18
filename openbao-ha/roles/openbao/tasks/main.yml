@@ -59,7 +59,7 @@
   delegate_to: "{{ openbao_init_bootstrap_host }}"
   run_once: true
 
-- name: Forward rsyslog vers SIEM (audit + sshd + HAProxy)
+- name: Forward rsyslog vers SIEM (audit + sshd)
   ansible.builtin.import_tasks: syslog_forward.yml
   tags: [openbao, syslog, siem]
   when: openbao_siem_enabled | default(false) | bool

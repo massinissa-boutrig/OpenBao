@@ -25,12 +25,10 @@
 # Doit être longue (32+ caractères), aléatoire, conservée au coffre.
 pki_ca_passphrase: "CHANGEME_long_random_passphrase_for_internal_CA_private_key"
 
-# Mot de passe pour la page stats HAProxy (user "admin").
-haproxy_stats_password: "CHANGEME_haproxy_stats_admin_password"
-
-# Mot de passe partagé VRRP entre HAProxy MASTER et BACKUP d'un même DC.
-# Authentification PASS — 8 caractères max (limitation keepalived/VRRP).
-keepalived_auth_pass: "CHANGEM8"
+# Note : plus de variables haproxy_stats_password ni keepalived_auth_pass
+# ni openstack_auth / openstack_floating_ip_id. La paire HAProxy + keepalived
+# + script de failover FIP a été remplacée par Octavia (LBaaS OpenStack),
+# provisionné par Terraform — cf. terraform/octavia-lb/.
 
 # Token OpenBao dédié au playbook backup.yml.
 # Créé après init via :

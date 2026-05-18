@@ -1,7 +1,10 @@
 ---
 # ============================================================
-# Orchestration complète : OpenBao + HAProxy + Floating IP failover
-# (architecture sans keepalived/VRRP, basée sur Floating IP OpenStack)
+# Orchestration : déploiement des 3 nœuds OpenBao.
+#
+# Le frontal (load balancing + VIP/FIP) est porté par Octavia (LBaaS
+# OpenStack) et provisionné par Terraform — voir terraform/octavia-lb/.
+# Les anciens rôles haproxy / keepalived / openstack_fip ont été retirés.
 #
 # Init et unseal automatiques :
 #   Si openbao_auto_init_enabled=true (defaults rôle openbao ou
@@ -17,17 +20,3 @@
   serial: "{{ '1' if (openbao_auto_init_enabled | default(false) | bool) else '100%' }}"
   roles:
     - openbao
-
-- name: Déployer HAProxy
-  hosts: haproxy
-  become: true
-  gather_facts: true
-  roles:
-    - haproxy
-
-- name: Déployer le failover Floating IP (script + systemd timer)
-  hosts: haproxy
-  become: true
-  gather_facts: true
-  roles:
-    - openstack_fip

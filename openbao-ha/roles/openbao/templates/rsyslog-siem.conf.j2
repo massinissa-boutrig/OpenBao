@@ -1,8 +1,11 @@
 # {{ ansible_managed }}
-# Forwarder rsyslog : audit OpenBao + logs HAProxy → SIEM TCP+TLS.
+# Forwarder rsyslog : audit OpenBao + sshd → SIEM TCP+TLS.
 #
-# Source : facility AUTH (audit OpenBao) + facility LOCAL0 (HAProxy).
+# Source : facility AUTH (audit OpenBao + sshd).
 # Cible  : {{ openbao_siem_host }}:{{ openbao_siem_port }} (TLS).
+#
+# Note : plus de forwarding HAProxy depuis ces nœuds — le LB est Octavia
+# (managé par OpenStack), ses logs sont à récupérer côté contrôleur Octavia.
 
 # Charger les modules TLS
 module(load="omfwd")
@@ -31,19 +34,3 @@ auth.* action(
   queue.saveOnShutdown="on"
 )
 
-# Forward HAProxy (facility LOCAL0 par défaut) vers le SIEM
-local0.* action(
-  type="omfwd"
-  target="{{ openbao_siem_host }}"
-  port="{{ openbao_siem_port }}"
-  protocol="tcp"
-  StreamDriver="gtls"
-  StreamDriverMode="1"
-  StreamDriverAuthMode="x509/name"
-  StreamDriverPermittedPeers="{{ openbao_siem_host }}"
-  Action.ResumeRetryCount="-1"
-  queue.type="LinkedList"
-  queue.size="50000"
-  queue.filename="haproxy-siem-spool"
-  queue.saveOnShutdown="on"
-)

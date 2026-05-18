@@ -123,29 +123,41 @@ groups:
             et de ralentissement. Vérifier les TTL configurés et
             envisager une revue des AppRoles bind_secret_id.
 
-  - name: haproxy
+  # ============================================================
+  # Octavia LB — métriques fournies par openstack-exporter
+  # (https://github.com/openstack-exporter/openstack-exporter)
+  # à déployer côté serveur de monitoring. Adapter les labels
+  # selon l'exporter utilisé.
+  # ============================================================
+  - name: octavia
     interval: 30s
     rules:
 
-      - alert: HAProxyBackendDown
-        expr: haproxy_backend_status{state="DOWN"} == 1
+      - alert: OctaviaLBOperatingStatusDegraded
+        expr: |
+          openstack_loadbalancer_operating_status{name="openbao-prod-lb"} != 1
         for: 1m
         labels:
           severity: critical
-          service: haproxy
+          service: octavia
         annotations:
-          summary: "Backend HAProxy {{ $labels.backend }} DOWN"
+          summary: "LB Octavia OpenBao en état dégradé"
+          description: |
+            operating_status != ONLINE. Vérifier :
+              openstack loadbalancer status show <lb_id>
+              openstack loadbalancer amphora list --loadbalancer <lb_id>
 
-      - alert: FloatingIPNotMigrated
+      - alert: OctaviaMemberOffline
         expr: |
-          sum by (cluster) (openbao_fip_attached{}) != 1
+          openstack_loadbalancer_member_operating_status{pool=~".*openbao.*"} != 1
         for: 2m
         labels:
           severity: critical
-          service: fip-failover
+          service: octavia
         annotations:
-          summary: "Floating IP non attachée OU attachée à plusieurs hôtes"
+          summary: "Member OpenBao {{ $labels.member }} OFFLINE dans le LB"
           description: |
-            Sum = {{ $value }} (devrait être 1). Soit la FIP n'est attachée
-            à aucun HAProxy (perte de service), soit à plusieurs (split brain).
-            Vérifier journalctl -u openbao-fip-failover et l'état Neutron.
+            Un nœud OpenBao n'est plus pris en charge par le LB. Vérifier :
+              - nftables sur le nœud (autorise-t-il octavia_lb_subnet_cidr ?)
+              - état OpenBao : bao status, sceau, healthcheck local
+              - logs Octavia : openstack loadbalancer status show <lb_id>
