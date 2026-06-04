@@ -20,3 +20,9 @@
 provider "openstack" {
   cloud = var.openstack_cloud
 }
+
+variable "openstack_cloud" {
+  description = "Nom du cloud dans clouds.yaml utilisé pour s'authentifier."
+  type        = string
+  default     = "openbao"
+}

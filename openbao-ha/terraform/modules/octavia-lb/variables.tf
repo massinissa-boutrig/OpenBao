@@ -1,13 +1,4 @@
 # ============================================================
-# Identité OpenStack
-# ============================================================
-variable "openstack_cloud" {
-  description = "Nom du cloud dans clouds.yaml utilisé pour s'authentifier."
-  type        = string
-  default     = "openbao"
-}
-
-# ============================================================
 # Load Balancer Octavia
 # ============================================================
 variable "lb_name" {
