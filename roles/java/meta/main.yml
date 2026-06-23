@@ -1,0 +1,23 @@
+---
+galaxy_info:
+  role_name: java
+  author: OpenBao
+  description: Installe une version spécifique d'OpenJDK et gère les certificats du cacerts du JDK
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm   # Debian 12
+        - trixie     # Debian 13
+    - name: Rocky
+      versions:
+        - all   # testé sur Rocky 9
+  galaxy_tags:
+    - java
+    - openjdk
+    - jdk
+    - keystore
+    - cacerts
+
+dependencies: []

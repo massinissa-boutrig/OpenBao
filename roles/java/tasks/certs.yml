@@ -1,0 +1,124 @@
+---
+- name: Définir le chemin du cacerts
+  ansible.builtin.set_fact:
+    java_cacerts: "{{ java_home_resolved }}/lib/security/cacerts"
+
+- name: Vérifier que le cacerts existe
+  ansible.builtin.stat:
+    path: "{{ java_cacerts }}"
+  register: java_cacerts_stat
+
+- name: Échouer si cacerts introuvable
+  ansible.builtin.fail:
+    msg: "cacerts introuvable à {{ java_cacerts }}"
+  when: not java_cacerts_stat.stat.exists
+
+# =========================================================
+# SUPPRESSION (java_certs_absent : liste d'alias)
+# =========================================================
+- name: Vérifier la présence des alias à supprimer
+  ansible.builtin.command: >-
+    keytool -list -keystore {{ java_cacerts }}
+    -storepass {{ java_cacerts_storepass }}
+    -alias {{ item }}
+  register: java_absent_check
+  changed_when: false
+  failed_when: false
+  loop: "{{ java_certs_absent }}"
+  no_log: true
+
+- name: Supprimer les certificats demandés
+  ansible.builtin.command: >-
+    keytool -delete
+    -alias {{ item.item }}
+    -keystore {{ java_cacerts }}
+    -storepass {{ java_cacerts_storepass }}
+  loop: "{{ java_absent_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc == 0
+  changed_when: true
+  no_log: true
+
+# =========================================================
+# AJOUT (java_certs_present : liste {alias, src})
+# =========================================================
+- name: Créer le répertoire temporaire des certs
+  ansible.builtin.file:
+    path: "{{ java_certs_tmp_dir }}"
+    state: directory
+    mode: "0700"
+  when: java_certs_present | length > 0
+
+- name: Copier les certificats sur la cible
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ java_certs_tmp_dir }}/{{ item.alias }}.crt"
+    mode: "0600"
+  loop: "{{ java_certs_present }}"
+  loop_control:
+    label: "{{ item.alias }}"
+
+- name: Lire l'empreinte SHA-256 du certificat source
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    keytool -printcert -file {{ java_certs_tmp_dir }}/{{ item.alias }}.crt
+    | grep -i 'SHA256:' | tr -d ' ' | cut -d: -f2-
+  args:
+    executable: /bin/bash
+  register: java_src_fp
+  changed_when: false
+  loop: "{{ java_certs_present }}"
+  loop_control:
+    label: "{{ item.alias }}"
+
+- name: Lire l'empreinte SHA-256 de l'alias déjà présent (si existant)
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    keytool -list -keystore {{ java_cacerts }}
+    -storepass {{ java_cacerts_storepass }}
+    -alias {{ item.alias }}
+    | grep -i 'SHA256:' | tr -d ' ' | cut -d: -f2-
+  args:
+    executable: /bin/bash
+  register: java_dst_fp
+  changed_when: false
+  failed_when: false
+  loop: "{{ java_certs_present }}"
+  loop_control:
+    label: "{{ item.alias }}"
+  no_log: true
+
+- name: Supprimer l'alias présent dont l'empreinte diffère
+  ansible.builtin.command: >-
+    keytool -delete
+    -alias {{ item.0.alias }}
+    -keystore {{ java_cacerts }}
+    -storepass {{ java_cacerts_storepass }}
+  when:
+    - item.2.stdout | length > 0
+    - item.2.stdout | upper != item.1.stdout | upper
+  loop: "{{ java_certs_present | zip(java_src_fp.results, java_dst_fp.results) | list }}"
+  loop_control:
+    label: "{{ item.0.alias }}"
+  changed_when: true
+  no_log: true
+
+- name: Importer les certificats manquants ou modifiés
+  ansible.builtin.command: >-
+    keytool -importcert -noprompt
+    -alias {{ item.0.alias }}
+    -file {{ java_certs_tmp_dir }}/{{ item.0.alias }}.crt
+    -keystore {{ java_cacerts }}
+    -storepass {{ java_cacerts_storepass }}
+  when: item.1.stdout | upper != item.2.stdout | upper
+  loop: "{{ java_certs_present | zip(java_src_fp.results, java_dst_fp.results) | list }}"
+  loop_control:
+    label: "{{ item.0.alias }}"
+  changed_when: true
+  no_log: true
+
+- name: Nettoyer les certificats temporaires
+  ansible.builtin.file:
+    path: "{{ java_certs_tmp_dir }}"
+    state: absent

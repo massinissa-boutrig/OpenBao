@@ -1,0 +1,10 @@
+---
+# Nom du paquet OpenJDK selon la famille d'OS et JDK/JRE.
+# Debian/Ubuntu : openjdk-<ver>-jdk / openjdk-<ver>-jre-headless
+# RedHat/Rocky  : java-<ver>-openjdk-devel / java-<ver>-openjdk-headless
+_java_package: >-
+  {{
+    ('openjdk-' ~ java_version ~ ('-jdk' if java_jdk else '-jre-headless'))
+    if ansible_os_family == 'Debian'
+    else ('java-' ~ java_version ~ '-openjdk' ~ ('-devel' if java_jdk else '-headless'))
+  }}

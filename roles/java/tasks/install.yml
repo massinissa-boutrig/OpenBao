@@ -1,0 +1,43 @@
+---
+# --- Debian 12 / 13 ---
+- name: (Debian) Mettre à jour le cache apt
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  when: ansible_os_family == 'Debian'
+
+- name: (Debian) Installer OpenJDK
+  ansible.builtin.apt:
+    name: "{{ _java_package }}"
+    state: present
+  when: ansible_os_family == 'Debian'
+
+# --- Rocky 9 ---
+- name: (RedHat) Installer OpenJDK
+  ansible.builtin.dnf:
+    name: "{{ _java_package }}"
+    state: present
+  when: ansible_os_family == 'RedHat'
+
+# --- Détection JAVA_HOME ---
+- name: Détecter le chemin de java
+  ansible.builtin.command: readlink -f /usr/bin/java
+  register: java_bin
+  changed_when: false
+  when: java_home | length == 0
+
+- name: Calculer JAVA_HOME
+  ansible.builtin.set_fact:
+    # /usr/lib/jvm/.../bin/java -> /usr/lib/jvm/...
+    java_home_resolved: >-
+      {{ java_home if java_home | length > 0
+         else (java_bin.stdout | dirname | dirname) }}
+
+- name: Vérifier la version installée
+  ansible.builtin.command: "{{ java_home_resolved }}/bin/java -version"
+  register: java_version_out
+  changed_when: false
+
+- name: Afficher la version Java installée
+  ansible.builtin.debug:
+    msg: "{{ java_version_out.stderr_lines | first }} (JAVA_HOME={{ java_home_resolved }})"

@@ -1,0 +1,33 @@
+---
+# Version OpenJDK à installer (surchargeable). Ex: "17", "21", "11"
+java_version: "17"
+
+# Installer le JDK complet (true) ou le JRE headless seulement (false)
+java_jdk: true
+
+# Forcer un chemin JAVA_HOME explicite (sinon auto-détecté)
+java_home: ""
+
+# --- Gestion des certificats dans le cacerts du JDK ---
+
+# Mot de passe du keystore cacerts (par défaut OpenJDK)
+java_cacerts_storepass: "changeit"
+
+# Liste des certificats à AJOUTER au cacerts.
+# Chaque entrée :
+#   alias : alias unique dans le keystore (obligatoire)
+#   src   : chemin du fichier .crt/.pem sur le contrôleur Ansible
+# Exemple :
+# java_certs_present:
+#   - alias: my-internal-ca
+#     src: files/my-internal-ca.crt
+java_certs_present: []
+
+# Liste des alias de certificats à SUPPRIMER du cacerts.
+# Exemple :
+# java_certs_absent:
+#   - old-internal-ca
+java_certs_absent: []
+
+# Répertoire distant où déposer temporairement les certs avant import
+java_certs_tmp_dir: "/tmp/java_certs"

@@ -1,0 +1,16 @@
+---
+# Exemple de playbook utilisant le rôle java
+# Usage: ansible-playbook -i inventory playbook.example.yml
+- name: Installer Java et gérer les certificats
+  hosts: all
+  become: true
+  roles:
+    - role: java
+      vars:
+        java_version: "17"
+        java_jdk: true
+        java_certs_present:
+          - alias: my-internal-ca
+            src: files/my-internal-ca.crt
+        java_certs_absent:
+          - old-internal-ca

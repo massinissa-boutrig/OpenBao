@@ -1,0 +1,20 @@
+---
+- name: Vérifier que l'OS est supporté
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ansible_os_family == 'Debian' and ansible_distribution == 'Debian'
+         and ansible_distribution_major_version in ['12', '13'])
+        or
+        (ansible_os_family == 'RedHat' and ansible_distribution == 'Rocky'
+         and ansible_distribution_major_version == '9')
+    fail_msg: >-
+      OS non supporté : {{ ansible_distribution }} {{ ansible_distribution_major_version }}.
+      Supportés : Debian 12, Debian 13, Rocky 9.
+
+- name: Installer OpenJDK
+  ansible.builtin.import_tasks: install.yml
+
+- name: Gérer les certificats du cacerts
+  ansible.builtin.import_tasks: certs.yml
+  when: java_certs_present | length > 0 or java_certs_absent | length > 0
